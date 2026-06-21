@@ -113,7 +113,10 @@ const CFG = DEFAULT_CONFIG;
  */
 function computeCell(cols: number): number {
   if (typeof window === 'undefined') return BASE_CELL;
-  const cellByWidth  = Math.floor((window.innerWidth  -  16) / cols);
+  // Use 2-player column count (10) as the width reference so the board always
+  // fits without shrinking cells. Wider boards (3P/4P) scroll horizontally.
+  const refCols    = Math.min(cols, 10);
+  const cellByWidth  = Math.floor((window.innerWidth  -  16) / refCols);
   const cellByHeight = Math.floor((window.innerHeight - 100) / 12);
   return Math.max(24, Math.min(BASE_CELL, Math.min(cellByWidth, cellByHeight)));
 }
@@ -577,6 +580,7 @@ export default function App() {
   });
   const [showGrid, setShowGrid] = useState(false);
   const showGridRef = useRef(false);
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const [showSettingsScreen, setShowSettingsScreen] = useState(false);
 
   // ── Online UI state ────────────────────────────────────────────────────────
@@ -1007,8 +1011,17 @@ export default function App() {
   };
 
   // ── Touch events ──────────────────────────────────────────────────────────
+  // touchAction:'pan-x' lets the browser handle horizontal scroll natively.
+  // We record touch start to distinguish a tap (drop) from a pan (scroll).
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+  };
+
   const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
+    // horizontal pans are claimed by the browser (pan-x); only non-horizontal
+    // moves fire here — update the column preview for diagonal/vertical drags
     const t = e.touches[0];
     if (!t) return;
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -1022,6 +1035,15 @@ export default function App() {
     e.preventDefault();
     const t = e.changedTouches[0];
     if (!t) return;
+    // Only treat as a tap (drop) if touch barely moved and ended quickly
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (start) {
+      const dx = Math.abs(t.clientX - start.x);
+      const dy = Math.abs(t.clientY - start.y);
+      const dt = Date.now() - start.time;
+      if (dx > 14 || dy > 14 || dt > 600) return; // was a scroll / long-press
+    }
     const rect = canvasRef.current!.getBoundingClientRect();
     handleInteract(
       (t.clientX - rect.left) * (W / rect.width),
@@ -1429,9 +1451,10 @@ export default function App() {
           height={(PREVIEW_ROWS + ROWS) * cellPx}
           onMouseMove={handleMouseMove}
           onClick={handleClick}
+          onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          style={{ borderRadius: 14, display: 'block', cursor: ui.status === 'playing' ? 'crosshair' : 'default', touchAction: 'none' }}
+          style={{ borderRadius: 14, display: 'block', cursor: ui.status === 'playing' ? 'crosshair' : 'default', touchAction: 'pan-x' }}
         />
 
         {/* ── Guest waiting for host overlay ──────────────────────────────── */}
