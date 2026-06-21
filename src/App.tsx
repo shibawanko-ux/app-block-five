@@ -106,11 +106,16 @@ function applyExplosion(board: Board, col: number, row: number): Board {
 // ── Layout ────────────────────────────────────────────────────────────────────
 const CFG = DEFAULT_CONFIG;
 
-/** Compute cell size to fit the current window width. Clamped to [28, BASE_CELL]. */
+/**
+ * Compute cell size so the canvas fits both width and height of the viewport.
+ * totalRows = PREVIEW_ROWS(2) + ROWS(10) = 12.
+ * ~100px reserved for turn indicator, gaps, and browser chrome.
+ */
 function computeCell(cols: number): number {
   if (typeof window === 'undefined') return BASE_CELL;
-  const maxW = window.innerWidth - 16; // 8px padding each side
-  return Math.max(28, Math.min(BASE_CELL, Math.floor(maxW / cols)));
+  const cellByWidth  = Math.floor((window.innerWidth  -  16) / cols);
+  const cellByHeight = Math.floor((window.innerHeight - 100) / 12);
+  return Math.max(24, Math.min(BASE_CELL, Math.min(cellByWidth, cellByHeight)));
 }
 
 let COLS = CFG.cols;
