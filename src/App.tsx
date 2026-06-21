@@ -288,7 +288,6 @@ function drawFrame(
   isBombMode = false,
   explodeAnim: ExplodeState | null = null,
   showGrid = true,
-  bombHud?: { remaining: number; active: boolean; visible: boolean },
 ) {
   // Background
   ctx.fillStyle = '#0f172a';
@@ -433,48 +432,6 @@ function drawFrame(
     drawRotatedBlock(ctx, x, y, remoteFalling.body.angle, BLOCK, remoteFalling.player, 0);
   }
 
-  // ── Bomb HUD button (bottom-right corner) ────────────────────────────────
-  if (bombHud?.visible) {
-    const { remaining, active } = bombHud;
-    const btnSize = CELL;
-    const btnX = W - btnSize - 8;
-    const btnY = H - btnSize - 8;
-    const hasAmmo = remaining > 0;
-
-    ctx.save();
-    ctx.globalAlpha = hasAmmo || active ? 1 : 0.32;
-
-    if (active) { ctx.shadowBlur = 20; ctx.shadowColor = '#ef4444'; }
-    roundRect(ctx, btnX, btnY, btnSize, btnSize, 12);
-    ctx.fillStyle = active ? 'rgba(239,68,68,0.22)' : 'rgba(10,18,36,0.88)';
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    ctx.strokeStyle = active ? '#ef4444' : (hasAmmo ? '#475569' : '#1e293b');
-    ctx.lineWidth = active ? 2.5 : 1.5;
-    roundRect(ctx, btnX, btnY, btnSize, btnSize, 12);
-    ctx.stroke();
-
-    ctx.font = '26px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('💣', btnX + btnSize / 2, btnY + btnSize / 2 - 5);
-
-    ctx.fillStyle = active ? '#f87171' : (hasAmmo ? '#64748b' : '#334155');
-    ctx.font = 'bold 8px "Inter", system-ui, sans-serif';
-    ctx.fillText(active ? 'CANCEL' : 'BOMB', btnX + btnSize / 2, btnY + btnSize - 8);
-
-    const bx = btnX + btnSize - 12, by = btnY + 12;
-    ctx.fillStyle = active ? '#ef4444' : (hasAmmo ? '#10b981' : '#475569');
-    ctx.beginPath(); ctx.arc(bx, by, 11, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(String(remaining), bx, by);
-
-    ctx.restore();
-  }
-
   // ── Win / Draw overlay ───────────────────────────────────────────────────
   if (ui.status === 'won' || ui.status === 'draw') {
     ctx.fillStyle = 'rgba(6,12,26,0.62)';
@@ -571,6 +528,10 @@ export default function App() {
   const actionModeRef = useRef<'drop' | 'bomb'>('drop');
   const bombHoverCellRef = useRef<{ col: number; row: number } | null>(null);
   const bombsRemainingRef = useRef<Record<Player, number>>({
+    p1: BOMBS_PER_PLAYER, p2: BOMBS_PER_PLAYER, p3: BOMBS_PER_PLAYER, p4: BOMBS_PER_PLAYER,
+  });
+  const [actionMode, setActionMode] = useState<'drop' | 'bomb'>('drop');
+  const [bombsRemaining, setBombsRemaining] = useState<Record<Player, number>>({
     p1: BOMBS_PER_PLAYER, p2: BOMBS_PER_PLAYER, p3: BOMBS_PER_PLAYER, p4: BOMBS_PER_PLAYER,
   });
   const [showGrid, setShowGrid] = useState(false);
@@ -905,15 +866,7 @@ export default function App() {
         }
       }
 
-      const curUi = uiRef.current;
-      const isMyTurnNow = curUi.status === 'playing' &&
-        !(curUi.mode === 'cpu' && curUi.currentPlayer === 'p2') &&
-        !(curUi.mode === 'online' && onlineRef.current.myRole !== curUi.currentPlayer);
-      drawFrame(ctx, curUi, fallingRef.current, boardRef.current, previewXRef.current, squashRef.current.value, confettiRef.current, winAnimRef.current.textScale, remoteBodyRef.current, onlineRef.current.myRole, bombsRef.current, bombHoverCellRef.current, actionModeRef.current === 'bomb', explodeAnimRef.current, showGridRef.current, {
-        remaining: bombsRemainingRef.current[curUi.currentPlayer],
-        active: actionModeRef.current === 'bomb',
-        visible: isMyTurnNow,
-      });
+      drawFrame(ctx, uiRef.current, fallingRef.current, boardRef.current, previewXRef.current, squashRef.current.value, confettiRef.current, winAnimRef.current.textScale, remoteBodyRef.current, onlineRef.current.myRole, bombsRef.current, bombHoverCellRef.current, actionModeRef.current === 'bomb', explodeAnimRef.current, showGridRef.current);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
@@ -925,12 +878,6 @@ export default function App() {
     const s = uiRef.current;
     if (s.status !== 'playing' || explodeAnimRef.current) return;
     if (actionModeRef.current === 'bomb') {
-      // Don't highlight the HUD button area as a bomb target
-      const btnX = W - CELL - 8, btnY = H - CELL - 8;
-      if (rawX >= btnX && rawX <= btnX + CELL && rawY >= btnY && rawY <= btnY + CELL) {
-        bombHoverCellRef.current = null;
-        return;
-      }
       const bCol = Math.floor(rawX / CELL);
       const bRow = Math.floor((rawY - GRID_Y) / CELL);
       if (rawY >= GRID_Y && bRow >= 0 && bRow < ROWS && bCol >= 0 && bCol < COLS) {
@@ -952,23 +899,6 @@ export default function App() {
   const handleInteract = (rawX: number, rawY: number) => {
     const s = uiRef.current;
     if (s.status !== 'playing' || explodeAnimRef.current) return;
-
-    // ── HUD bomb button click ─────────────────────────────────────────────
-    {
-      const isMyTurn = !(s.mode === 'cpu' && s.currentPlayer === 'p2') &&
-        !(s.mode === 'online' && s.currentPlayer !== onlineRef.current.myRole);
-      if (isMyTurn) {
-        const btnX = W - CELL - 8, btnY = H - CELL - 8;
-        if (rawX >= btnX && rawX <= btnX + CELL && rawY >= btnY && rawY <= btnY + CELL) {
-          if (bombsRemainingRef.current[s.currentPlayer] > 0 || actionModeRef.current === 'bomb') {
-            const next: 'drop' | 'bomb' = actionModeRef.current === 'bomb' ? 'drop' : 'bomb';
-            actionModeRef.current = next;
-            if (next === 'drop') bombHoverCellRef.current = null;
-          }
-          return;
-        }
-      }
-    }
 
     if (actionModeRef.current === 'bomb') {
       if (s.mode === 'cpu' && s.currentPlayer === 'p2') return;
@@ -1052,8 +982,10 @@ export default function App() {
     explodeAnimRef.current = null;
     bombHoverCellRef.current = null;
     actionModeRef.current = 'drop';
+    setActionMode('drop');
     const resetBombs = { p1: BOMBS_PER_PLAYER, p2: BOMBS_PER_PLAYER, p3: BOMBS_PER_PLAYER, p4: BOMBS_PER_PLAYER };
     bombsRemainingRef.current = resetBombs;
+    setBombsRemaining(resetBombs);
   };
 
   const startGame = (mode: GameMode) => {
@@ -1196,7 +1128,9 @@ export default function App() {
 
     if (ev.type === 'bomb' && ev.col != null && ev.row != null) {
       bombsRef.current = [...bombsRef.current, { col: ev.col, row: ev.row, turnsLeft: 2, placedBy: ev.player }];
-      bombsRemainingRef.current = { ...bombsRemainingRef.current, [ev.player]: bombsRemainingRef.current[ev.player] - 1 };
+      const nb = { ...bombsRemainingRef.current, [ev.player]: bombsRemainingRef.current[ev.player] - 1 };
+      bombsRemainingRef.current = nb;
+      setBombsRemaining(nb);
       const next: Player = nextTurn(ev.player, playerCountRef.current);
       patchUi({ currentPlayer: next });
       startTurnTimer(next);
@@ -1209,8 +1143,11 @@ export default function App() {
     const player = s.currentPlayer;
 
     bombsRef.current = [...bombsRef.current, { col, row, turnsLeft: 2, placedBy: player }];
-    bombsRemainingRef.current = { ...bombsRemainingRef.current, [player]: bombsRemainingRef.current[player] - 1 };
+    const nextBombs = { ...bombsRemainingRef.current, [player]: bombsRemainingRef.current[player] - 1 };
+    bombsRemainingRef.current = nextBombs;
+    setBombsRemaining(nextBombs);
     actionModeRef.current = 'drop';
+    setActionMode('drop');
     bombHoverCellRef.current = null;
 
     const next: Player = nextTurn(player, playerCountRef.current);
@@ -1364,7 +1301,7 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', background: '#060c1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 16, fontFamily: '"Inter", system-ui, sans-serif' }}>
 
-      {/* Player turn indicator */}
+      {/* Player turn indicator + bomb button */}
       {(ui.status === 'playing' || ui.status === 'won' || ui.status === 'draw' || ui.status === 'waiting') && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor(), boxShadow: `0 0 10px ${statusColor()}` }} />
@@ -1378,6 +1315,45 @@ export default function App() {
               minWidth: 34, textAlign: 'right',
             }}>{countdown}s</span>
           )}
+          {/* Bomb button — shown only on the player's own turn */}
+          {ui.status === 'playing' && (() => {
+            const isMyTurn =
+              !(ui.mode === 'cpu' && ui.currentPlayer === 'p2') &&
+              !(ui.mode === 'online' && ui.currentPlayer !== onlineRef.current.myRole);
+            if (!isMyTurn) return null;
+            const remaining = bombsRemaining[ui.currentPlayer];
+            const active = actionMode === 'bomb';
+            return (
+              <button
+                onClick={() => {
+                  const next: 'drop' | 'bomb' = active ? 'drop' : 'bomb';
+                  actionModeRef.current = next;
+                  setActionMode(next);
+                  if (next === 'drop') bombHoverCellRef.current = null;
+                }}
+                disabled={remaining === 0 && !active}
+                style={{
+                  position: 'relative', width: 44, height: 44, borderRadius: 10, flexShrink: 0,
+                  border: `2px solid ${active ? '#ef4444' : remaining === 0 ? '#1e293b' : '#475569'}`,
+                  background: active ? 'rgba(239,68,68,0.18)' : 'rgba(15,23,42,0.85)',
+                  color: '#fff', fontSize: 20, lineHeight: 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: remaining === 0 && !active ? 'not-allowed' : 'pointer',
+                  boxShadow: active ? '0 0 14px rgba(239,68,68,0.6)' : 'none',
+                  fontFamily: 'inherit', padding: 0,
+                  opacity: remaining === 0 && !active ? 0.35 : 1,
+                  transition: 'box-shadow 0.15s, border-color 0.15s, background 0.15s',
+                }}
+              >
+                💣
+                <span style={{
+                  position: 'absolute', top: 2, right: 4,
+                  fontSize: 10, fontWeight: 800, lineHeight: 1,
+                  color: remaining > 0 ? '#10b981' : '#475569',
+                }}>{remaining}</span>
+              </button>
+            );
+          })()}
         </div>
       )}
 
