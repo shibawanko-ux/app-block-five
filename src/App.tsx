@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Matter from 'matter-js';
 import type { Board, GameMode, GameStatus, Player, PlayerCount, WinResult } from './types';
-import { CELL, DEFAULT_CONFIG, PREVIEW_ROWS, colsForPlayerCount } from './types';
+import { CELL as BASE_CELL, DEFAULT_CONFIG, PREVIEW_ROWS, colsForPlayerCount } from './types';
 import { checkWin, createBoard, isDraw } from './gameLogic';
 import { getCpuMove } from './cpuPlayer';
 import {
@@ -105,12 +105,21 @@ function applyExplosion(board: Board, col: number, row: number): Board {
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 const CFG = DEFAULT_CONFIG;
-let COLS = CFG.cols;       // mutable: changes with playerCount
+
+/** Compute cell size to fit the current window width. Clamped to [28, BASE_CELL]. */
+function computeCell(cols: number): number {
+  if (typeof window === 'undefined') return BASE_CELL;
+  const maxW = window.innerWidth - 16; // 8px padding each side
+  return Math.max(28, Math.min(BASE_CELL, Math.floor(maxW / cols)));
+}
+
+let COLS = CFG.cols;
 const ROWS = CFG.rows;
-let W = COLS * CELL;       // mutable: changes with playerCount
-const GRID_Y = PREVIEW_ROWS * CELL;
-const H = GRID_Y + ROWS * CELL;
-const BLOCK = CELL - 8;
+let CELL = computeCell(COLS); // dynamic: shrinks on small screens
+let W = COLS * CELL;
+let GRID_Y = PREVIEW_ROWS * CELL;
+let H = GRID_Y + ROWS * CELL;
+let BLOCK = CELL - 8;
 
 function nextTurn(current: Player, playerCount: number): Player {
   const idx = parseInt(current[1]); // 1, 2, 3, 4
@@ -543,6 +552,7 @@ export default function App() {
   const [connectedCount, setConnectedCount] = useState(1);
   const [waitingForStart, setWaitingForStart] = useState(false);
   const [canvasCols, setCanvasCols] = useState(CFG.cols);
+  const [cellPx, setCellPx] = useState(CELL);
 
   const [onlineScreen, setOnlineScreen] = useState<'menu' | 'join'>('menu');
   const [roomCodeInput, setRoomCodeInput] = useState('');
@@ -590,14 +600,34 @@ export default function App() {
     return () => { Engine.clear(engine); };
   }, []);
 
+  // ── Resize: recalc cell size when not in-game ─────────────────────────────
+  useEffect(() => {
+    const onResize = () => {
+      if (uiRef.current.status === 'playing') return;
+      CELL = computeCell(COLS);
+      W = COLS * CELL;
+      GRID_Y = PREVIEW_ROWS * CELL;
+      H = GRID_Y + ROWS * CELL;
+      BLOCK = CELL - 8;
+      setCellPx(CELL);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // ── Board resize ──────────────────────────────────────────────────────────
   const resetBoardWidth = useCallback((playerCount: PlayerCount) => {
     COLS = colsForPlayerCount(playerCount);
+    CELL = computeCell(COLS);
     W = COLS * CELL;
+    GRID_Y = PREVIEW_ROWS * CELL;
+    H = GRID_Y + ROWS * CELL;
+    BLOCK = CELL - 8;
     playerCountRef.current = playerCount;
     previewXRef.current = W / 2;
     setCanvasCols(COLS);
-    // Reposition physics walls for new board width
+    setCellPx(CELL);
+    // Reposition physics walls for new board width / height
     const floor = floorBodyRef.current;
     const rightWall = rightWallBodyRef.current;
     if (floor) Body.setPosition(floor, { x: W / 2, y: H + 10 });
@@ -1361,8 +1391,8 @@ export default function App() {
       <div style={{ position: 'relative', overflowX: 'auto', maxWidth: '100vw' }}>
         <canvas
           ref={canvasRef}
-          width={canvasCols * CELL}
-          height={H}
+          width={canvasCols * cellPx}
+          height={(PREVIEW_ROWS + ROWS) * cellPx}
           onMouseMove={handleMouseMove}
           onClick={handleClick}
           onTouchMove={handleTouchMove}
