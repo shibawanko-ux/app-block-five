@@ -302,6 +302,7 @@ function drawFrame(
   isBombMode = false,
   explodeAnim: ExplodeState | null = null,
   showGrid = true,
+  playerCount: 2 | 3 | 4 = 2,
 ) {
   // Background
   ctx.fillStyle = '#0f172a';
@@ -436,14 +437,12 @@ function drawFrame(
     ctx.fillText(String(bomb.turnsLeft), cx + 11, cy - 11);
   }
 
-  // Falling block
-  if (falling) {
-    const { x, y } = falling.body.position;
-    drawRotatedBlock(ctx, x, y, falling.body.angle, BLOCK, falling.player, squash);
-  }
-  if (remoteFalling) {
-    const { x, y } = remoteFalling.body.position;
-    drawRotatedBlock(ctx, x, y, remoteFalling.body.angle, BLOCK, remoteFalling.player, 0);
+  // Falling block — draw only the "active" body once (remoteFalling is same body as falling in online mode)
+  const drawnBody = falling ?? remoteFalling;
+  if (drawnBody) {
+    const { x, y } = drawnBody.body.position;
+    const appliedSquash = falling ? squash : 0;
+    drawRotatedBlock(ctx, x, y, drawnBody.body.angle, BLOCK, drawnBody.player, appliedSquash);
   }
 
   // ── Win / Draw overlay ───────────────────────────────────────────────────
@@ -490,6 +489,34 @@ function drawFrame(
         ctx.fillStyle = '#f8fafc';
         ctx.font = 'bold 34px "Inter", system-ui, sans-serif';
         ctx.fillText('WINS!', 0, 64);
+
+        // Loser display — all players except winner
+        const allP = (['p1', 'p2', 'p3', 'p4'] as Player[]).slice(0, playerCount);
+        const losers = allP.filter(p => p !== ui.winner);
+        if (losers.length > 0) {
+          const loseY = 120;
+          const spread = Math.min(110, (W * 0.45) / Math.max(1, losers.length - 1 || 1));
+          const startX = -(losers.length - 1) * spread / 2;
+          losers.forEach((p, i) => {
+            const tx = startX + i * spread;
+            const lLabel = p === 'p2' && ui.mode === 'cpu' ? 'CPU'
+              : p === 'p1' ? 'PLAYER 1'
+              : p === 'p2' ? 'PLAYER 2'
+              : p === 'p3' ? 'PLAYER 3'
+              : 'PLAYER 4';
+            ctx.globalAlpha = 0.7;
+            ctx.shadowBlur = 10; ctx.shadowColor = COLOR[p];
+            ctx.fillStyle = COLOR[p];
+            ctx.font = 'bold 22px "Inter", system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(lLabel, tx, loseY);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = 'bold 15px "Inter", system-ui, sans-serif';
+            ctx.fillText('LOSES', tx, loseY + 27);
+            ctx.globalAlpha = 1;
+          });
+        }
       }
 
       ctx.shadowBlur = 0;
@@ -653,6 +680,7 @@ export default function App() {
       frictionAir: 0.015,
       label: `block-${player}`,
     });
+    Body.setInertia(body, Infinity); // prevent rotation — blocks fall straight
     Composite.add(engine.world, body);
     fallingRef.current = { body, player };
     settledCntRef.current = 0;
@@ -901,7 +929,7 @@ export default function App() {
         }
       }
 
-      drawFrame(ctx, uiRef.current, fallingRef.current, boardRef.current, previewXRef.current, squashRef.current.value, confettiRef.current, winAnimRef.current.textScale, remoteBodyRef.current, onlineRef.current.myRole, bombsRef.current, bombHoverCellRef.current, actionModeRef.current === 'bomb', explodeAnimRef.current, showGridRef.current);
+      drawFrame(ctx, uiRef.current, fallingRef.current, boardRef.current, previewXRef.current, squashRef.current.value, confettiRef.current, winAnimRef.current.textScale, remoteBodyRef.current, onlineRef.current.myRole, bombsRef.current, bombHoverCellRef.current, actionModeRef.current === 'bomb', explodeAnimRef.current, showGridRef.current, playerCountRef.current);
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
@@ -1070,6 +1098,7 @@ export default function App() {
         frictionAir: 0.015,
         label: `block-${ev.player}-remote`,
       });
+      Body.setInertia(body, Infinity);
       Composite.add(engine.world, body);
       remoteBodyRef.current = { body, player: ev.player };
       fallingRef.current = { body, player: ev.player };
