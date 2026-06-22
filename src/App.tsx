@@ -581,7 +581,6 @@ export default function App() {
   const [showGrid, setShowGrid] = useState(false);
   const showGridRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
-  const [showSettingsScreen, setShowSettingsScreen] = useState(false);
 
   // ── Online UI state ────────────────────────────────────────────────────────
   const [selectedPlayerCount, setSelectedPlayerCount] = useState<PlayerCount>(2);
@@ -596,6 +595,8 @@ export default function App() {
   const [onlineError, setOnlineError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [disconnectMsg, setDisconnectMsg] = useState('');
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [autoDropMsg, setAutoDropMsg] = useState(false);
 
   const patchUi = (patch: Partial<UIState>) => {
     const next = { ...uiRef.current, ...patch };
@@ -720,6 +721,8 @@ export default function App() {
 
       isAutoDropRef.current = true;
       setCountdown(null);
+      setAutoDropMsg(true);
+      setTimeout(() => setAutoDropMsg(false), 1500);
       const x = validCols[Math.floor(Math.random() * validCols.length)] * CELL + CELL / 2;
       dropBlock(x, player);
       if (s.mode === 'online') emitDrop(onlineRef.current.roomCode, player, x);
@@ -1041,7 +1044,7 @@ export default function App() {
       const dx = Math.abs(t.clientX - start.x);
       const dy = Math.abs(t.clientY - start.y);
       const dt = Date.now() - start.time;
-      if (dx > 14 || dy > 14 || dt > 600) return; // was a scroll / long-press
+      if (dx > 22 || dy > 22 || dt > 600) return; // was a scroll / long-press
     }
     const rect = canvasRef.current!.getBoundingClientRect();
     handleInteract(
@@ -1375,8 +1378,14 @@ export default function App() {
     if (ui.status === 'waiting') return waitingForStart ? 'ホストを待っています…' : 'Waiting for players…';
     if (ui.status === 'won' && ui.winner) return `${playerLabel(ui.winner)} WIN 🎉`;
     if (ui.status === 'draw') return 'DRAW';
+    const isMyTurnNow =
+      !(ui.mode === 'cpu' && ui.currentPlayer === 'p2') &&
+      !(ui.mode === 'online' && ui.currentPlayer !== onlineRef.current.myRole);
+    if (actionMode === 'bomb' && isMyTurnNow) return '💣 相手のブロックをタップ';
     if (ui.mode === 'online') {
-      return ui.currentPlayer === onlineRef.current.myRole ? 'Your Turn' : "Opponent's Turn";
+      return ui.currentPlayer === onlineRef.current.myRole
+        ? 'Your Turn'
+        : `${playerLabel(ui.currentPlayer)}'s Turn`;
     }
     return `${playerLabel(ui.currentPlayer)}'s Turn`;
   };
@@ -1392,7 +1401,12 @@ export default function App() {
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, color: statusColor(), textTransform: 'uppercase' }}>
             {statusText()}
           </span>
-          {ui.status === 'playing' && countdown !== null && (
+          {ui.status === 'playing' && autoDropMsg && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', letterSpacing: 1 }}>
+              ⏰ 時間切れ！
+            </span>
+          )}
+          {ui.status === 'playing' && !autoDropMsg && countdown !== null && (
             <span style={{
               fontSize: 12, fontWeight: 700,
               color: countdown > 20 ? '#10b981' : countdown > 10 ? '#fbbf24' : '#ef4444',
@@ -1452,7 +1466,7 @@ export default function App() {
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          style={{ borderRadius: 14, display: 'block', cursor: ui.status === 'playing' ? 'crosshair' : 'default', touchAction: 'pan-x' }}
+          style={{ borderRadius: 14, display: 'block', cursor: ui.status === 'playing' ? (actionMode === 'bomb' ? 'crosshair' : 'crosshair') : 'default', touchAction: actionMode === 'bomb' ? 'none' : 'pan-x' }}
         />
 
         {/* ── Guest waiting for host overlay ──────────────────────────────── */}
@@ -1466,6 +1480,9 @@ export default function App() {
             <div style={{ fontSize: 48 }}>⏳</div>
             <div style={{ color: '#60a5fa', fontSize: 18, fontWeight: 700 }}>
               ホストがゲームを準備中…
+            </div>
+            <div style={{ color: '#10b981', fontSize: 15, fontWeight: 700 }}>
+              {connectedCount} 人が接続中
             </div>
             <div style={{ color: '#475569', fontSize: 13 }}>
               全員が揃うまで待ちます
@@ -1508,7 +1525,7 @@ export default function App() {
           }}>
 
             {/* ── Normal mode select ── */}
-            {!showSettingsScreen && ui.status === 'idle' && ui.mode !== 'online' && (<>
+            {ui.status === 'idle' && ui.mode !== 'online' && (<>
               <div style={{ textAlign: 'center' }}>
                 <div style={{
                   fontSize: 54, fontWeight: 900, letterSpacing: 10,
@@ -1520,6 +1537,13 @@ export default function App() {
                 <p style={{ color: '#334155', fontSize: 12, marginTop: 10, letterSpacing: 3, textTransform: 'uppercase' }}>
                   Physics · Strategy · 5-in-a-row
                 </p>
+              </div>
+              <div style={{ color: '#475569', fontSize: 12, textAlign: 'center', lineHeight: 1.7 }}>
+                <span>5マス揃えたら勝利</span>
+                <span style={{ margin: '0 8px', color: '#1e293b' }}>·</span>
+                <span>好きな列に自由落下</span>
+                <span style={{ margin: '0 8px', color: '#1e293b' }}>·</span>
+                <span>💣 爆弾で相手ブロックを破壊（2ターン後爆発）</span>
               </div>
               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
                 {([
@@ -1559,48 +1583,19 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <button
-                onClick={() => setShowSettingsScreen(true)}
-                style={{
-                  padding: '6px 16px', borderRadius: 8,
-                  border: '1px solid #1e293b', background: 'transparent',
-                  color: '#334155', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', letterSpacing: 1,
-                }}
-              >⚙️ Settings</button>
-            </>)}
-
-            {/* ── Settings screen ── */}
-            {showSettingsScreen && (<>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 32, marginBottom: 6 }}>⚙️</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9', letterSpacing: 4 }}>SETTINGS</div>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 0, width: 240, background: '#0f172a', borderRadius: 14, overflow: 'hidden', border: '1px solid #1e293b' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px' }}>
-                  <div>
-                    <div style={{ color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}>格子柄</div>
-                    <div style={{ color: '#475569', fontSize: 11, marginTop: 2 }}>グリッドラインの表示</div>
-                  </div>
-                  <div
-                    onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
-                    style={{ width: 42, height: 24, borderRadius: 12, background: showGrid ? '#3b82f6' : '#334155', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
-                  >
-                    <div style={{ position: 'absolute', top: 3, left: showGrid ? 21 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
-                  </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#334155', fontSize: 11, letterSpacing: 1 }}>格子柄</span>
+                <div
+                  onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
+                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? '#3b82f6' : '#1e293b', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
+                >
+                  <div style={{ position: 'absolute', top: 2, left: showGrid ? 17 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
                 </div>
               </div>
-              <button
-                onClick={() => setShowSettingsScreen(false)}
-                style={{
-                  padding: '8px 18px', borderRadius: 8,
-                  border: '1px solid #1e293b', background: 'transparent',
-                  color: '#334155', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', letterSpacing: 1,
-                }}
-              >← Back</button>
             </>)}
 
             {/* ── Online sub-menu ── */}
-            {!showSettingsScreen && ui.status === 'idle' && ui.mode === 'online' && (<>
+            {ui.status === 'idle' && ui.mode === 'online' && (<>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 36, marginBottom: 6 }}>🌐</div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: '#f1f5f9', letterSpacing: 4 }}>ONLINE MATCH</div>
@@ -1718,7 +1713,7 @@ export default function App() {
             </>)}
 
             {/* ── Waiting for players (host) ── */}
-            {!showSettingsScreen && ui.status === 'waiting' && (<>
+            {ui.status === 'waiting' && (<>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 40, marginBottom: 8 }}>⏳</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: '#f1f5f9', letterSpacing: 2 }}>
@@ -1743,22 +1738,31 @@ export default function App() {
                   {createdCode}
                 </div>
                 <button
-                  onClick={() => navigator.clipboard.writeText(createdCode)}
+                  onClick={() => {
+                    navigator.clipboard.writeText(createdCode).then(() => {
+                      setCodeCopied(true);
+                      setTimeout(() => setCodeCopied(false), 2000);
+                    });
+                  }}
                   style={{
                     padding: '8px 20px', borderRadius: 8,
-                    border: '1px solid #334155', background: 'rgba(255,255,255,0.04)',
-                    color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+                    border: `1px solid ${codeCopied ? '#10b981' : '#334155'}`,
+                    background: codeCopied ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.04)',
+                    color: codeCopied ? '#10b981' : '#94a3b8',
+                    fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+                    transition: 'all 0.2s',
                   }}
-                >📋 Copy code</button>
+                >{codeCopied ? '✅ Copied!' : '📋 Copy code'}</button>
               </div>
-              <button
-                onClick={() => setShowSettingsScreen(true)}
-                style={{
-                  padding: '6px 16px', borderRadius: 8,
-                  border: '1px solid #1e293b', background: 'transparent',
-                  color: '#334155', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', letterSpacing: 1,
-                }}
-              >⚙️ Settings</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#334155', fontSize: 11, letterSpacing: 1 }}>格子柄</span>
+                <div
+                  onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
+                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? '#3b82f6' : '#1e293b', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
+                >
+                  <div style={{ position: 'absolute', top: 2, left: showGrid ? 17 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
+                </div>
+              </div>
 
               <button
                 onClick={() => { leaveOnlineRoom(); patchUi({ status: 'idle', mode: 'online' }); }}
