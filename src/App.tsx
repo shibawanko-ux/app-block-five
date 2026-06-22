@@ -684,7 +684,6 @@ export default function App() {
       frictionAir: 0.015,
       label: `block-${player}`,
     });
-    Body.setInertia(body, Infinity); // prevent rotation — blocks fall straight
     Composite.add(engine.world, body);
     fallingRef.current = { body, player };
     settledCntRef.current = 0;
@@ -1120,7 +1119,6 @@ export default function App() {
         frictionAir: 0.015,
         label: `block-${ev.player}-remote`,
       });
-      Body.setInertia(body, Infinity);
       Composite.add(engine.world, body);
       remoteBodyRef.current = { body, player: ev.player };
       fallingRef.current = { body, player: ev.player };
