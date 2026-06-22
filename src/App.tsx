@@ -1808,7 +1808,7 @@ function actionBtn(color: string): React.CSSProperties {
   return {
     padding: '11px 24px', borderRadius: 10,
     border: `1.5px solid ${color}`,
-    background: 'transparent', color,
+    background: 'rgba(6,12,26,0.82)', color,
     fontSize: 13, fontWeight: 700, letterSpacing: 1,
     cursor: 'pointer', textTransform: 'uppercase',
   } as React.CSSProperties;
