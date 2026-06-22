@@ -877,6 +877,12 @@ export default function App() {
           const angVel = Math.abs(f.body.angularVelocity);
           const inGrid = f.body.position.y > GRID_Y;
           if (speed < 0.5 && angVel < 0.05 && inGrid) {
+            // Physics guidance: while settling, gently steer X toward column center
+            const targetCol = Math.max(0, Math.min(COLS - 1, Math.round((f.body.position.x - CELL / 2) / CELL)));
+            const targetX = targetCol * CELL + CELL / 2;
+            const corrVx = (targetX - f.body.position.x) * 0.18;
+            Body.setVelocity(f.body, { x: corrVx, y: vy });
+            Body.setAngularVelocity(f.body, f.body.angularVelocity * 0.65);
             if (++settledCntRef.current >= 20) settleRef.current(f);
           } else {
             settledCntRef.current = 0;
