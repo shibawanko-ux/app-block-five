@@ -1781,17 +1781,25 @@ export default function App() {
             </>)}
           </div>
         )}
+
+        {/* ── Action buttons overlay — positioned below WINS!/LOSES text ── */}
+        {(ui.status === 'won' || ui.status === 'draw') && (
+          <div style={{
+            position: 'absolute',
+            top: 'calc(50% + 175px)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex', gap: 12, zIndex: 10,
+            whiteSpace: 'nowrap',
+          }}>
+            {ui.mode !== 'online' && (
+              <button onClick={() => startGame(ui.mode)} style={actionBtn('#16a34a')}>Play Again</button>
+            )}
+            <button onClick={resetGame} style={actionBtn('#334155')}>Main Menu</button>
+          </div>
+        )}
       </div>
 
-      {/* Action buttons — shown after game ends */}
-      {(ui.status === 'won' || ui.status === 'draw') && (
-        <div style={{ display: 'flex', gap: 12 }}>
-          {ui.mode !== 'online' && (
-            <button onClick={() => startGame(ui.mode)} style={actionBtn('#16a34a')}>Play Again</button>
-          )}
-          <button onClick={resetGame} style={actionBtn('#334155')}>Main Menu</button>
-        </div>
-      )}
     </div>
   );
 }
