@@ -781,6 +781,13 @@ export default function App() {
       { isStatic: true, label: 'settled' },
     ));
 
+    // Online: emit settle event so remote clients can snap board.
+    // Must fire before any win/draw/timeout early-return below, otherwise the
+    // move that decides the game never reaches the opponent's client.
+    if (uiRef.current.mode === 'online') {
+      emitSettle(onlineRef.current.roomCode, falling.player, col, row, isAuto);
+    }
+
     const wr = checkWin(newBoard, CFG.winLength);
     if (wr) { clearTurnTimer(); patchUi({ status: 'won', winner: wr.winner, winResult: wr }); return; }
     if (isDraw(newBoard)) { clearTurnTimer(); patchUi({ status: 'draw' }); return; }
@@ -800,11 +807,6 @@ export default function App() {
 
     const next: Player = nextTurn(falling.player, playerCountRef.current);
     patchUi({ currentPlayer: next });
-
-    // Online: emit settle event so remote clients can snap board
-    if (uiRef.current.mode === 'online') {
-      emitSettle(onlineRef.current.roomCode, falling.player, col, row, isAuto);
-    }
 
     // Process bomb timers: decrement → animate explosion if turnsLeft reaches 0
     {
