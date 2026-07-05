@@ -7,7 +7,7 @@ import { getCpuMove } from './cpuPlayer';
 import {
   createRoom, joinRoom, emitDrop, emitSettle, emitBomb, emitStart,
   subscribeEvent, subscribeAllConnected, subscribeAnyOpponentDisconnect, removeRoom,
-  registerDisconnect,
+  registerDisconnect, leaveRoomAsGuest, subscribeHostDisconnect,
 } from './firebase';
 import type { RoomEvent } from './firebase';
 
@@ -552,7 +552,8 @@ export default function App() {
     unsubEvent: (() => void) | null;
     unsubAllConnected: (() => void) | null;
     unsubDisconnect: (() => void) | null;
-  }>({ roomCode: '', myRole: 'p1', unsubEvent: null, unsubAllConnected: null, unsubDisconnect: null });
+    unsubHostWait: (() => void) | null;
+  }>({ roomCode: '', myRole: 'p1', unsubEvent: null, unsubAllConnected: null, unsubDisconnect: null, unsubHostWait: null });
 
   const remoteBodyRef = useRef<FallingBlock | null>(null);
   const floorBodyRef = useRef<Matter.Body | null>(null);
@@ -1103,6 +1104,10 @@ export default function App() {
       clearPhysics();
       timeoutStreakRef.current = { p1: 0, p2: 0, p3: 0, p4: 0 };
 
+      // Replace the wait-phase host-only listener with full opponent-disconnect coverage
+      onlineRef.current.unsubHostWait?.();
+      onlineRef.current.unsubHostWait = null;
+
       // Subscribe to opponent disconnects (guests do this on start)
       const myRole = onlineRef.current.myRole;
       const code = onlineRef.current.roomCode;
@@ -1324,6 +1329,17 @@ export default function App() {
 
       registerDisconnect(code, myRole);
 
+      // Watch the host's connection while waiting for 'start' — otherwise a host
+      // disconnect during this phase leaves the guest stuck on the waiting screen.
+      const unsubHostWait = subscribeHostDisconnect(code, () => {
+        if (uiRef.current.status === 'waiting') {
+          onlineRef.current.unsubHostWait?.();
+          onlineRef.current.unsubHostWait = null;
+          setDisconnectMsg('ホストの接続が切れました');
+        }
+      });
+      onlineRef.current.unsubHostWait = unsubHostWait;
+
       // Subscribe to events — 'start' event will kick off the game
       const unsubEvent = subscribeEvent(code, (ev) => handleRemoteEventRef.current(ev));
       onlineRef.current.unsubEvent = unsubEvent;
@@ -1344,11 +1360,19 @@ export default function App() {
     onlineRef.current.unsubEvent?.();
     onlineRef.current.unsubAllConnected?.();
     onlineRef.current.unsubDisconnect?.();
+    onlineRef.current.unsubHostWait?.();
     onlineRef.current.unsubEvent = null;
     onlineRef.current.unsubAllConnected = null;
     onlineRef.current.unsubDisconnect = null;
+    onlineRef.current.unsubHostWait = null;
     if (onlineRef.current.roomCode) {
-      removeRoom(onlineRef.current.roomCode);
+      // Only the host owns the room; a guest leaving must not delete it out
+      // from under the host and any other still-connected players.
+      if (onlineRef.current.myRole === 'p1') {
+        removeRoom(onlineRef.current.roomCode);
+      } else {
+        leaveRoomAsGuest(onlineRef.current.roomCode, onlineRef.current.myRole);
+      }
       onlineRef.current.roomCode = '';
     }
     setCreatedCode('');

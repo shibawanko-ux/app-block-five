@@ -169,15 +169,32 @@ export function subscribeEvent(
   return () => off(r);
 }
 
+const CONNECTED_FIELD: Record<Player, string> = {
+  p1: 'hostConnected',
+  p2: 'p2Connected',
+  p3: 'p3Connected',
+  p4: 'p4Connected',
+};
+
 /** Register Firebase onDisconnect hook — writes false to this player's field on drop. */
 export function registerDisconnect(code: string, player: Player): void {
-  const fieldMap: Record<Player, string> = {
-    p1: 'hostConnected',
-    p2: 'p2Connected',
-    p3: 'p3Connected',
-    p4: 'p4Connected',
-  };
-  onDisconnect(ref(db, `rooms/${code}/${fieldMap[player]}`)).set(false);
+  onDisconnect(ref(db, `rooms/${code}/${CONNECTED_FIELD[player]}`)).set(false);
+}
+
+/** Mark a non-host player as left, without deleting the room (host owns the room). */
+export function leaveRoomAsGuest(code: string, player: Player): Promise<void> {
+  return set(ref(db, `rooms/${code}/${CONNECTED_FIELD[player]}`), false);
+}
+
+/** Subscribe to the host's connection field only (used by guests while waiting for game start).
+ *  Fires both when the field flips to false (onDisconnect hook) and when the whole room node
+ *  is removed (host explicitly cancels via removeRoom) — the latter reports snap.exists() === false. */
+export function subscribeHostDisconnect(code: string, cb: () => void): () => void {
+  const r = ref(db, `rooms/${code}/hostConnected`);
+  onValue(r, snap => {
+    if (!snap.exists() || snap.val() === false) cb();
+  });
+  return () => off(r);
 }
 
 /** Clean up a room when the game ends / player leaves. */
