@@ -16,7 +16,7 @@ export const db = getDatabase(app);
 
 // ── Room data shape ───────────────────────────────────────────────────────────
 export interface RoomEvent {
-  type: 'drop' | 'settle' | 'bomb' | 'start';
+  type: 'drop' | 'settle' | 'bomb' | 'start' | 'skip';
   player: Player;
   x?: number;           // drop: pixel X
   col?: number;         // settle/bomb: column
@@ -147,6 +147,13 @@ export function emitSettle(code: string, player: Player, col: number, row: numbe
 export function emitBomb(code: string, player: Player, col: number, row: number): Promise<void> {
   return set(ref(db, `rooms/${code}/lastEvent`), {
     type: 'bomb', player, col, row, ts: serverTimestamp(),
+  });
+}
+
+/** Send a skip event: this player's drop landed in a full column, no block was placed. */
+export function emitSkip(code: string, player: Player): Promise<void> {
+  return set(ref(db, `rooms/${code}/lastEvent`), {
+    type: 'skip', player, ts: serverTimestamp(),
   });
 }
 

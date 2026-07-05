@@ -5,7 +5,7 @@ import { CELL as BASE_CELL, DEFAULT_CONFIG, PREVIEW_ROWS, colsForPlayerCount } f
 import { checkWin, createBoard, isDraw } from './gameLogic';
 import { getCpuMove } from './cpuPlayer';
 import {
-  createRoom, joinRoom, emitDrop, emitSettle, emitBomb, emitStart,
+  createRoom, joinRoom, emitDrop, emitSettle, emitBomb, emitStart, emitSkip,
   subscribeEvent, subscribeAllConnected, subscribeAnyOpponentDisconnect, removeRoom,
   registerDisconnect, leaveRoomAsGuest, subscribeHostDisconnect,
 } from './firebase';
@@ -767,7 +767,22 @@ export default function App() {
       if (board[r][col] === null) { row = r; break; }
     }
     if (row === -1) {
-      patchUi({ currentPlayer: nextTurn(falling.player, playerCountRef.current) });
+      const next: Player = nextTurn(falling.player, playerCountRef.current);
+      patchUi({ currentPlayer: next });
+      // Online: this player's turn produced no board change (column full) —
+      // still notify the remote client so their turn state doesn't desync.
+      if (uiRef.current.mode === 'online') {
+        emitSkip(onlineRef.current.roomCode, falling.player);
+      }
+      if (!(uiRef.current.mode === 'cpu' && next === 'p2')) {
+        startTurnTimer(next);
+      }
+      if (uiRef.current.mode === 'cpu' && next === 'p2') {
+        setTimeout(() => {
+          const cpuCol = getCpuMove(boardRef.current, 'p2', 'p1', CFG.winLength);
+          dropBlock(cpuCol * CELL + CELL / 2, 'p2');
+        }, 700);
+      }
       return;
     }
 
@@ -1231,6 +1246,23 @@ export default function App() {
       const nb = { ...bombsRemainingRef.current, [ev.player]: bombsRemainingRef.current[ev.player] - 1 };
       bombsRemainingRef.current = nb;
       setBombsRemaining(nb);
+      const next: Player = nextTurn(ev.player, playerCountRef.current);
+      patchUi({ currentPlayer: next });
+      startTurnTimer(next);
+    }
+
+    if (ev.type === 'skip') {
+      // Remote player's drop landed in a full column — no board change, just advance the turn.
+      const engine = engineRef.current;
+      if (engine && remoteBodyRef.current) {
+        Composite.remove(engine.world, remoteBodyRef.current.body);
+        remoteBodyRef.current = null;
+      }
+      if (engine && fallingRef.current && fallingRef.current.player !== onlineRef.current.myRole) {
+        Composite.remove(engine.world, fallingRef.current.body);
+        fallingRef.current = null;
+      }
+      settledCntRef.current = 0;
       const next: Player = nextTurn(ev.player, playerCountRef.current);
       patchUi({ currentPlayer: next });
       startTurnTimer(next);
