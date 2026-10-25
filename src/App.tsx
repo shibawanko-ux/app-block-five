@@ -4,6 +4,9 @@ import type { Board, GameMode, GameStatus, Player, PlayerCount, WinResult } from
 import { CELL as BASE_CELL, DEFAULT_CONFIG, PREVIEW_ROWS, colsForPlayerCount } from './types';
 import { checkWin, createBoard, isDraw } from './gameLogic';
 import { getCpuMove } from './cpuPlayer';
+import SlingGame from './sling/SlingGame';
+import { starPath, starPoints } from './sling/draw';
+import { COLORS as THEME, FONTS } from './theme';
 import {
   createRoom, joinRoom, emitDrop, emitSettle, emitBomb, emitStart, emitSkip,
   subscribeEvent, subscribeAllConnected, subscribeAnyOpponentDisconnect, removeRoom,
@@ -136,7 +139,15 @@ function nextTurn(current: Player, playerCount: number): Player {
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 const COLOR: Record<Player, string> = {
-  p1: '#3b82f6', p2: '#ef4444', p3: '#eab308', p4: '#22c55e',
+  p1: THEME.p1.base, p2: THEME.p2.base, p3: '#eab308', p4: '#22c55e',
+};
+
+// P3/P4 tones are provisional (DESIGN.md §2: not decided yet)
+const GUMMY_TONE: Record<Player, { light: string; base: string; deep: string }> = {
+  p1: THEME.p1,
+  p2: THEME.p2,
+  p3: { light: '#F7D35A', base: '#eab308', deep: '#B88A05' },
+  p4: { light: '#5FDB8B', base: '#22c55e', deep: '#16924A' },
 };
 
 // factor > 1 = lighter, < 1 = darker (default 1 = no change)
@@ -145,14 +156,6 @@ function hexToRgba(hex: string, a: number, factor = 1): string {
   const g = Math.min(255, Math.round(parseInt(hex.slice(3, 5), 16) * factor));
   const b = Math.min(255, Math.round(parseInt(hex.slice(5, 7), 16) * factor));
   return `rgba(${r},${g},${b},${a})`;
-}
-
-// Shift brightness of a hex color by a multiplier (>1 = lighter, <1 = darker)
-function brighten(hex: string, factor: number): string {
-  const r = Math.min(255, Math.round(parseInt(hex.slice(1, 3), 16) * factor));
-  const g = Math.min(255, Math.round(parseInt(hex.slice(3, 5), 16) * factor));
-  const b = Math.min(255, Math.round(parseInt(hex.slice(5, 7), 16) * factor));
-  return `rgb(${r},${g},${b})`;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -165,8 +168,8 @@ interface Confetti {
 }
 
 const CONFETTI_PALETTE: Record<Player | 'draw', string[]> = {
-  p1:   [COLOR.p1, '#93c5fd', '#fbbf24', '#ffffff', '#818cf8'],
-  p2:   [COLOR.p2, '#fca5a5', '#fbbf24', '#ffffff', '#f472b6'],
+  p1:   [COLOR.p1, THEME.p1.light, THEME.accent, '#ffffff', THEME.sub],
+  p2:   [COLOR.p2, THEME.p2.light, THEME.accent, '#ffffff', THEME.sub],
   p3:   [COLOR.p3, '#fde68a', '#fbbf24', '#ffffff', '#f59e0b'],
   p4:   [COLOR.p4, '#86efac', '#fbbf24', '#ffffff', '#34d399'],
   draw: ['#fbbf24', '#f59e0b', '#ffffff', '#94a3b8'],
@@ -216,77 +219,131 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-// Falling block — gradient fill + glow, drawn with physics rotation + squash-and-stretch
+// Gummy block — translucent jelly body, top/bottom edges, gloss and a per-player mark
+// so players can be told apart without relying on color (DESIGN.md §4).
+function drawGummy(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  player: Player, alpha = 1,
+) {
+  const tone = GUMMY_TONE[player];
+  const r = Math.min(w, h) * 0.3;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+
+  const grad = ctx.createLinearGradient(x, y, x + w * 0.35, y + h);
+  grad.addColorStop(0, tone.light);
+  grad.addColorStop(0.55, tone.base);
+  grad.addColorStop(1, tone.deep);
+  ctx.fillStyle = grad;
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fill();
+
+  // Bottom dark edge + top white edge give the "puffy" depth
+  ctx.save();
+  roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.fillRect(x, y + h - Math.max(3, h * 0.12), w, h);
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillRect(x, y, w, Math.max(2, h * 0.08));
+  ctx.restore();
+
+  // Gloss
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  roundRect(ctx, x + w * 0.18, y + h * 0.12, w * 0.34, h * 0.18, h * 0.09);
+  ctx.fill();
+
+  // Player mark
+  const cx = x + w / 2, cy = y + h / 2;
+  const m = Math.min(w, h);
+  ctx.lineCap = 'round';
+  if (player === 'p1') {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = Math.max(2, m * 0.08);
+    ctx.beginPath(); ctx.arc(cx, cy, m * 0.19, 0, Math.PI * 2); ctx.stroke();
+  } else if (player === 'p2') {
+    // ☆ (an × read as "wrong" to kids — DESIGN.md §4)
+    ctx.strokeStyle = 'rgba(120,30,10,0.55)';
+    ctx.lineWidth = Math.max(2, m * 0.075); ctx.lineJoin = 'round';
+    ctx.beginPath();
+    starPoints(m * 0.24, m * 0.105).forEach(([px, py], i) => (i ? ctx.lineTo(cx + px, cy + py + m * 0.02) : ctx.moveTo(cx + px, cy + py + m * 0.02)));
+    ctx.closePath(); ctx.stroke();
+  } else if (player === 'p3') {
+    ctx.strokeStyle = 'rgba(90,60,0,0.55)';
+    ctx.lineWidth = Math.max(2, m * 0.08);
+    const d = m * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - d); ctx.lineTo(cx + d, cy + d * 0.8); ctx.lineTo(cx - d, cy + d * 0.8); ctx.closePath();
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = 'rgba(0,70,30,0.55)';
+    ctx.lineWidth = Math.max(2, m * 0.08);
+    const d = m * 0.16;
+    ctx.strokeRect(cx - d, cy - d, d * 2, d * 2);
+  }
+  ctx.restore();
+}
+
+// Falling block — drawn with physics rotation + squash-and-stretch
 function drawRotatedBlock(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, angle: number,
   size: number, player: Player,
   squash = 0,
 ) {
-  const baseColor = COLOR[player];
   const w = size * (1 + squash * 0.8);
   const h = size * (1 - squash);
-  const r = Math.max(4, Math.min(8, Math.min(w, h) * 0.18));
 
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(angle);
-
-  ctx.shadowBlur = 22;
-  ctx.shadowColor = hexToRgba(baseColor, 0.75);
-
-  const grad = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
-  grad.addColorStop(0, brighten(baseColor, 1.4));
-  grad.addColorStop(1, brighten(baseColor, 0.6));
-  ctx.fillStyle = grad;
-  roundRect(ctx, -w / 2, -h / 2, w, h, r);
-  ctx.fill();
-
-  ctx.shadowBlur = 0;
-
-  ctx.strokeStyle = hexToRgba('#ffffff', 0.38);
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(-w / 2 + 8, -h / 2 + 2.5);
-  ctx.lineTo(w / 2 - 8, -h / 2 + 2.5);
-  ctx.stroke();
-
+  ctx.shadowBlur = 18;
+  ctx.shadowColor = hexToRgba(COLOR[player], 0.6);
+  drawGummy(ctx, -w / 2, -h / 2, w, h, player);
   ctx.restore();
 }
 
-// Settled block (axis-aligned) — gradient + highlight, optional win glow
+// Settled block (axis-aligned), optional win glow
 function drawSettledBlock(
   ctx: CanvasRenderingContext2D,
   bx: number, by: number,
-  size: number, clr: string, isWin: boolean,
+  size: number, player: Player, isWin: boolean,
 ) {
-  const grad = ctx.createLinearGradient(bx + 4, by + 4, bx + 4, by + 4 + size);
-  grad.addColorStop(0, brighten(clr, isWin ? 1.45 : 1.22));
-  grad.addColorStop(1, brighten(clr, isWin ? 0.82 : 0.68));
-  ctx.fillStyle = grad;
-  roundRect(ctx, bx + 4, by + 4, size, size, 8);
-  ctx.fill();
-
-  ctx.strokeStyle = hexToRgba('#ffffff', 0.28);
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(bx + 4 + 8, by + 4 + 2.5);
-  ctx.lineTo(bx + 4 + size - 8, by + 4 + 2.5);
-  ctx.stroke();
-
   if (isWin) {
-    ctx.strokeStyle = '#fbbf24';
-    ctx.lineWidth = 2.5;
-    roundRect(ctx, bx + 4, by + 4, size, size, 8);
+    ctx.save();
+    ctx.shadowBlur = 16;
+    ctx.shadowColor = THEME.accent;
+    ctx.strokeStyle = hexToRgba(THEME.accent, 0.9);
+    ctx.lineWidth = 3;
+    roundRect(ctx, bx + 2, by + 2, size + 4, size + 4, (size + 4) * 0.3);
     ctx.stroke();
-    ctx.shadowBlur = 14;
-    ctx.shadowColor = '#fbbf24';
-    ctx.strokeStyle = hexToRgba('#fbbf24', 0.45);
-    ctx.lineWidth = 9;
-    roundRect(ctx, bx + 2, by + 2, size + 4, size + 4, 10);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    ctx.restore();
   }
+  drawGummy(ctx, bx + 4, by + 4, size, size, player);
+}
+
+// Bomb — black ball, red fuse, turns-left digit (no emoji: DESIGN.md §4)
+function drawBomb(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, turnsLeft: number) {
+  ctx.save();
+  const g = ctx.createRadialGradient(cx - radius * 0.35, cy - radius * 0.4, radius * 0.1, cx, cy, radius);
+  g.addColorStop(0, '#5a5a5a');
+  g.addColorStop(0.6, THEME.bomb);
+  g.addColorStop(1, '#111');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = THEME.fuse;
+  ctx.lineWidth = Math.max(2, radius * 0.18);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx + radius * 0.5, cy - radius * 0.75);
+  ctx.quadraticCurveTo(cx + radius * 0.9, cy - radius * 1.3, cx + radius * 1.2, cy - radius * 1.05);
+  ctx.stroke();
+  ctx.fillStyle = turnsLeft === 1 ? THEME.fuse : THEME.accent;
+  ctx.font = `${Math.round(radius * 1.05)}px ${FONTS.logo}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(String(turnsLeft), cx, cy + radius * 0.08);
+  ctx.restore();
 }
 
 function drawFrame(
@@ -307,26 +364,42 @@ function drawFrame(
   showGrid = true,
   playerCount: 2 | 3 | 4 = 2,
 ) {
-  // Background
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(0, 0, W, H);
-
-  ctx.fillStyle = '#0d1424';
+  // Background — night sky above, glass jar below
+  const sky = ctx.createLinearGradient(0, 0, 0, GRID_Y);
+  sky.addColorStop(0, THEME.bgTop);
+  sky.addColorStop(1, THEME.bg);
+  ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, GRID_Y);
 
-  ctx.fillStyle = '#1e293b';
+  ctx.fillStyle = THEME.jar;
   ctx.fillRect(0, GRID_Y, W, ROWS * CELL);
+  const depth = ctx.createLinearGradient(0, H - CELL * 2, 0, H);
+  depth.addColorStop(0, 'rgba(0,0,0,0)');
+  depth.addColorStop(1, 'rgba(0,0,0,0.22)');
+  ctx.fillStyle = depth;
+  ctx.fillRect(0, H - CELL * 2, W, CELL * 2);
 
   if (showGrid) {
-    ctx.strokeStyle = '#273347';
+    ctx.strokeStyle = THEME.jarLine;
     ctx.lineWidth = 1;
-    for (let c = 0; c <= COLS; c++) {
+    for (let c = 1; c < COLS; c++) {
       ctx.beginPath(); ctx.moveTo(c * CELL, GRID_Y); ctx.lineTo(c * CELL, H); ctx.stroke();
     }
-    for (let r = 0; r <= ROWS; r++) {
+    for (let r = 1; r < ROWS; r++) {
       ctx.beginPath(); ctx.moveTo(0, GRID_Y + r * CELL); ctx.lineTo(W, GRID_Y + r * CELL); ctx.stroke();
     }
   }
+
+  // Jar rim and glass reflection
+  ctx.strokeStyle = THEME.glass;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(1, GRID_Y); ctx.lineTo(1, H - 1); ctx.lineTo(W - 1, H - 1); ctx.lineTo(W - 1, GRID_Y); ctx.stroke();
+  const shine = ctx.createLinearGradient(0, GRID_Y, 0, H);
+  shine.addColorStop(0, 'rgba(255,255,255,0.18)');
+  shine.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = shine;
+  roundRect(ctx, 6, GRID_Y + 10, 5, ROWS * CELL * 0.7, 2.5);
+  ctx.fill();
 
   const isHumanTurn =
     ui.status === 'playing' && !falling &&
@@ -335,18 +408,28 @@ function drawFrame(
 
   if (isHumanTurn && !isBombMode) {
     const clr = COLOR[ui.currentPlayer];
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = hexToRgba(clr, 0.2);
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(previewX, 0); ctx.lineTo(previewX, H); ctx.stroke();
+    ctx.setLineDash([4, 6]);
+    ctx.strokeStyle = hexToRgba(clr, 0.65);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(previewX, 4 + BLOCK); ctx.lineTo(previewX, GRID_Y); ctx.stroke();
     ctx.setLineDash([]);
 
-    const grad = ctx.createLinearGradient(previewX - BLOCK / 2, 4, previewX - BLOCK / 2, 4 + BLOCK);
-    grad.addColorStop(0, hexToRgba(clr, 0.55, 1.2));
-    grad.addColorStop(1, hexToRgba(clr, 0.35, 0.8));
-    ctx.fillStyle = grad;
-    roundRect(ctx, previewX - BLOCK / 2, 4, BLOCK, BLOCK, 8);
-    ctx.fill();
+    drawGummy(ctx, previewX - BLOCK / 2, 4, BLOCK, BLOCK, ui.currentPlayer, 0.6);
+
+    // Landing preview: the cell this drop would fill if it falls straight down
+    const col = Math.max(0, Math.min(COLS - 1, Math.floor(previewX / CELL)));
+    let landRow = -1;
+    for (let r = ROWS - 1; r >= 0; r--) { if (!board[r][col]) { landRow = r; break; } }
+    if (landRow >= 0) {
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = clr;
+      ctx.fillStyle = hexToRgba(clr, 0.16);
+      ctx.lineWidth = 2;
+      roundRect(ctx, col * CELL + 4, GRID_Y + landRow * CELL + 4, BLOCK, BLOCK, BLOCK * 0.3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
 
   // Settled blocks (with optional explosion animation)
@@ -356,7 +439,7 @@ function drawFrame(
       for (let c = 0; c < COLS; c++) {
         const cell = board[r][c];
         if (!cell) continue;
-        drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, COLOR[cell], winSet.has(`${r}-${c}`));
+        drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, cell, winSet.has(`${r}-${c}`));
       }
     }
   } else {
@@ -372,12 +455,12 @@ function drawFrame(
           const key = `${r}-${c}`;
           const cd = cellLookup.get(key);
           if (!cd) {
-            drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, COLOR[cell], winSet.has(key));
+            drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, cell, winSet.has(key));
           } else if (frame < cd.removeAt) {
-            drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, COLOR[cell], false);
+            drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, cell, false);
           } else if (frame < cd.removeAt + FADE_DUR) {
             ctx.globalAlpha = 1 - (frame - cd.removeAt) / FADE_DUR;
-            drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, COLOR[cell], false);
+            drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, cell, false);
             ctx.globalAlpha = 1;
           }
         }
@@ -401,13 +484,13 @@ function drawFrame(
           const cell = postBoard[r][c];
           if (!cell) continue;
           if (dropperKeys.has(`${r}-${c}`)) continue;
-          drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, COLOR[cell], winSet.has(`${r}-${c}`));
+          drawSettledBlock(ctx, c * CELL, GRID_Y + r * CELL, BLOCK, cell, winSet.has(`${r}-${c}`));
         }
       }
       for (const d of droppers) {
         const fromY = GRID_Y + d.row * CELL;
         const toY = GRID_Y + d.toRow * CELL;
-        drawSettledBlock(ctx, d.col * CELL, fromY + (toY - fromY) * ease, BLOCK, COLOR[d.player], false);
+        drawSettledBlock(ctx, d.col * CELL, fromY + (toY - fromY) * ease, BLOCK, d.player, false);
       }
     }
   }
@@ -416,10 +499,14 @@ function drawFrame(
   if (bombHoverCell) {
     const bx = bombHoverCell.col * CELL;
     const by = GRID_Y + bombHoverCell.row * CELL;
-    ctx.strokeStyle = '#ef4444';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 5;
+    roundRect(ctx, bx + 3, by + 3, CELL - 6, CELL - 6, (CELL - 6) * 0.3);
+    ctx.stroke();
+    ctx.strokeStyle = THEME.fuse;
     ctx.lineWidth = 3;
     ctx.setLineDash([5, 4]);
-    roundRect(ctx, bx + 3, by + 3, CELL - 6, CELL - 6, 7);
+    roundRect(ctx, bx + 3, by + 3, CELL - 6, CELL - 6, (CELL - 6) * 0.3);
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -428,16 +515,7 @@ function drawFrame(
   for (const bomb of bombs) {
     const cx = bomb.col * CELL + CELL / 2;
     const cy = GRID_Y + bomb.row * CELL + CELL / 2;
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.beginPath(); ctx.arc(cx, cy, 16, 0, Math.PI * 2); ctx.fill();
-    ctx.font = '18px sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('💣', cx, cy);
-    ctx.fillStyle = bomb.turnsLeft === 1 ? '#ef4444' : '#f59e0b';
-    ctx.beginPath(); ctx.arc(cx + 11, cy - 11, 9, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText(String(bomb.turnsLeft), cx + 11, cy - 11);
+    drawBomb(ctx, cx, cy, BLOCK * 0.36, bomb.turnsLeft);
   }
 
   // Falling block — draw only the "active" body once (remoteFalling is same body as falling in online mode)
@@ -450,7 +528,7 @@ function drawFrame(
 
   // ── Win / Draw overlay ───────────────────────────────────────────────────
   if (ui.status === 'won' || ui.status === 'draw') {
-    ctx.fillStyle = 'rgba(6,12,26,0.62)';
+    ctx.fillStyle = hexToRgba(THEME.bg, 0.62);
     ctx.fillRect(0, 0, W, H);
 
     for (const p of confetti) {
@@ -470,7 +548,7 @@ function drawFrame(
       ctx.translate(W / 2, H / 2 - 24);
       ctx.scale(textScale, textScale);
 
-      const winColor = ui.status === 'won' && ui.winner ? COLOR[ui.winner] : '#fbbf24';
+      const winColor = ui.status === 'won' && ui.winner ? COLOR[ui.winner] : THEME.accent;
       const winLabel = ui.status === 'draw'
         ? 'DRAW'
         : ui.winner === 'p1' ? 'PLAYER 1'
@@ -481,7 +559,7 @@ function drawFrame(
       ctx.shadowBlur = 70;
       ctx.shadowColor = winColor;
       ctx.fillStyle = winColor;
-      ctx.font = 'bold 68px "Inter", system-ui, sans-serif';
+      ctx.font = `68px ${FONTS.logo}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(winLabel, 0, 0);
@@ -490,7 +568,7 @@ function drawFrame(
         ctx.shadowBlur = 24;
         ctx.shadowColor = '#ffffff';
         ctx.fillStyle = '#f8fafc';
-        ctx.font = 'bold 34px "Inter", system-ui, sans-serif';
+        ctx.font = `34px ${FONTS.logo}`;
         ctx.fillText('WINS!', 0, 64);
 
         // Loser display — all players except winner
@@ -510,12 +588,12 @@ function drawFrame(
             ctx.globalAlpha = 0.7;
             ctx.shadowBlur = 10; ctx.shadowColor = COLOR[p];
             ctx.fillStyle = COLOR[p];
-            ctx.font = 'bold 22px "Inter", system-ui, sans-serif';
+            ctx.font = `22px ${FONTS.logo}`;
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(lLabel, tx, loseY);
             ctx.shadowBlur = 0;
             ctx.fillStyle = '#94a3b8';
-            ctx.font = 'bold 15px "Inter", system-ui, sans-serif';
+            ctx.font = `15px ${FONTS.logo}`;
             ctx.fillText('LOSES', tx, loseY + 27);
             ctx.globalAlpha = 1;
           });
@@ -544,6 +622,8 @@ export default function App() {
 
   const uiRef = useRef<UIState>(INIT_UI);
   const [ui, setUi] = useState<UIState>(INIT_UI);
+  // "ふたりで" now plays the pull-everything game (docs/requirements/2026-10-26_引っぱる操作の本体移行.md)
+  const [slingOn, setSlingOn] = useState(false);
 
   // ── Online multiplayer state ───────────────────────────────────────────────
   const onlineRef = useRef<{
@@ -588,6 +668,7 @@ export default function App() {
   const [connectedCount, setConnectedCount] = useState(1);
   const [waitingForStart, setWaitingForStart] = useState(false);
   const [canvasCols, setCanvasCols] = useState(CFG.cols);
+  const dpr = typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 3);
   const [cellPx, setCellPx] = useState(CELL);
 
   const [onlineScreen, setOnlineScreen] = useState<'menu' | 'join'>('menu');
@@ -598,6 +679,27 @@ export default function App() {
   const [disconnectMsg, setDisconnectMsg] = useState('');
   const [codeCopied, setCodeCopied] = useState(false);
   const [autoDropMsg, setAutoDropMsg] = useState(false);
+  // Player who is one more timeout away from losing (shown as a warning on their turn)
+  const [timeoutWarnPlayer, setTimeoutWarnPlayer] = useState<Player | null>(null);
+  // Short notice when a bomb tap lands on a cell that can't take a bomb
+  const [bombNotice, setBombNotice] = useState(false);
+  const bombNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showBombNotice = () => {
+    setBombNotice(true);
+    if (bombNoticeTimerRef.current) clearTimeout(bombNoticeTimerRef.current);
+    bombNoticeTimerRef.current = setTimeout(() => setBombNotice(false), 1500);
+  };
+  const trackTimeoutStreak = (player: Player, wasAuto: boolean): boolean => {
+    if (wasAuto) {
+      timeoutStreakRef.current[player]++;
+      if (timeoutStreakRef.current[player] >= MAX_TIMEOUT_STREAK) { setTimeoutWarnPlayer(null); return true; }
+      if (timeoutStreakRef.current[player] === MAX_TIMEOUT_STREAK - 1) setTimeoutWarnPlayer(player);
+    } else {
+      timeoutStreakRef.current[player] = 0;
+      setTimeoutWarnPlayer(w => (w === player ? null : w));
+    }
+    return false;
+  };
 
   const patchUi = (patch: Partial<UIState>) => {
     const next = { ...uiRef.current, ...patch };
@@ -721,6 +823,9 @@ export default function App() {
       if (!validCols.length) return;
 
       isAutoDropRef.current = true;
+      actionModeRef.current = 'drop';
+      setActionMode('drop');
+      bombHoverCellRef.current = null;
       setCountdown(null);
       setAutoDropMsg(true);
       setTimeout(() => setAutoDropMsg(false), 1500);
@@ -809,16 +914,13 @@ export default function App() {
     if (isDraw(newBoard)) { clearTurnTimer(); patchUi({ status: 'draw' }); return; }
 
     // Timeout streak tracking (only in 2-player modes)
-    if (isAuto && playerCountRef.current === 2) {
-      timeoutStreakRef.current[falling.player]++;
-      if (timeoutStreakRef.current[falling.player] >= MAX_TIMEOUT_STREAK) {
+    if ((isAuto && playerCountRef.current === 2) || !isAuto) {
+      if (trackTimeoutStreak(falling.player, isAuto)) {
         clearTurnTimer();
         const opponent = nextTurn(falling.player, playerCountRef.current);
         patchUi({ status: 'won', winner: opponent, winResult: null });
         return;
       }
-    } else if (!isAuto) {
-      timeoutStreakRef.current[falling.player] = 0;
     }
 
     const next: Player = nextTurn(falling.player, playerCountRef.current);
@@ -959,6 +1061,9 @@ export default function App() {
         }
       }
 
+      // Draw in logical px; the backing store is scaled by devicePixelRatio
+      const scale = canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : 1;
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
       drawFrame(ctx, uiRef.current, fallingRef.current, boardRef.current, previewXRef.current, squashRef.current.value, confettiRef.current, winAnimRef.current.textScale, remoteBodyRef.current, onlineRef.current.myRole, bombsRef.current, bombHoverCellRef.current, actionModeRef.current === 'bomb', explodeAnimRef.current, showGridRef.current, playerCountRef.current);
       animRef.current = requestAnimationFrame(loop);
     };
@@ -994,20 +1099,23 @@ export default function App() {
     if (s.status !== 'playing' || explodeAnimRef.current) return;
 
     if (actionModeRef.current === 'bomb') {
+      // A block is still falling: the turn is already used, so no bomb this turn
+      if (fallingRef.current) return;
       if (s.mode === 'cpu' && s.currentPlayer === 'p2') return;
       if (s.mode === 'online' && s.currentPlayer !== onlineRef.current.myRole) return;
       const bCol = Math.floor(rawX / CELL);
       const bRow = Math.floor((rawY - GRID_Y) / CELL);
       if (rawY >= GRID_Y && bRow >= 0 && bRow < ROWS && bCol >= 0 && bCol < COLS) {
         const cell = boardRef.current[bRow]?.[bCol];
-        if (cell !== null && cell !== undefined && cell !== s.currentPlayer && bombsRemainingRef.current[s.currentPlayer] > 0) {
+        const hasBomb = bombsRef.current.some(b => b.col === bCol && b.row === bRow);
+        if (cell !== null && cell !== undefined && cell !== s.currentPlayer && !hasBomb && bombsRemainingRef.current[s.currentPlayer] > 0) {
           placeBombAt(bCol, bRow);
           return;
         }
       }
-      // Clicked on invalid target — cancel bomb mode
-      actionModeRef.current = 'drop';
-      bombHoverCellRef.current = null;
+      // Invalid target — stay in bomb mode (cancel only via the bomb button) and say why
+      showBombNotice();
+      return;
     }
     if (fallingRef.current) return;
     if (s.mode === 'cpu' && s.currentPlayer === 'p2') return;
@@ -1100,9 +1208,11 @@ export default function App() {
   };
 
   const startGame = (mode: GameMode) => {
+    if (mode === '2player') { setSlingOn(true); return; }
     resetBoardWidth(2); // 2player/cpu always use 10 cols
     clearPhysics();
     timeoutStreakRef.current = { p1: 0, p2: 0, p3: 0, p4: 0 };
+    setTimeoutWarnPlayer(null);
     patchUi({ status: 'playing', currentPlayer: 'p1', winner: null, mode, winResult: null });
     startTurnTimer('p1');
   };
@@ -1118,6 +1228,7 @@ export default function App() {
       resetBoardWidth(pc);
       clearPhysics();
       timeoutStreakRef.current = { p1: 0, p2: 0, p3: 0, p4: 0 };
+    setTimeoutWarnPlayer(null);
 
       // Replace the wait-phase host-only listener with full opponent-disconnect coverage
       onlineRef.current.unsubHostWait?.();
@@ -1190,16 +1301,13 @@ export default function App() {
       if (isDraw(newBoard)) { clearTurnTimer(); patchUi({ status: 'draw' }); return; }
 
       const wasAuto = ev.timeout === true;
-      if (wasAuto && playerCountRef.current === 2) {
-        timeoutStreakRef.current[player]++;
-        if (timeoutStreakRef.current[player] >= MAX_TIMEOUT_STREAK) {
+      if ((wasAuto && playerCountRef.current === 2) || !wasAuto) {
+        if (trackTimeoutStreak(player, wasAuto)) {
           clearTurnTimer();
           const opponent = nextTurn(player, playerCountRef.current);
           patchUi({ status: 'won', winner: opponent, winResult: null });
           return;
         }
-      } else if (!wasAuto) {
-        timeoutStreakRef.current[player] = 0;
       }
 
       const next: Player = nextTurn(player, playerCountRef.current);
@@ -1332,6 +1440,7 @@ export default function App() {
           resetBoardWidth(playerCount);
           clearPhysics();
           timeoutStreakRef.current = { p1: 0, p2: 0, p3: 0, p4: 0 };
+    setTimeoutWarnPlayer(null);
           patchUi({ status: 'playing', mode: 'online', currentPlayer: 'p1', winner: null, winResult: null });
           startTurnTimer('p1');
           emitStart(code, playerCount);
@@ -1425,135 +1534,134 @@ export default function App() {
 
   // ── UI helpers ────────────────────────────────────────────────────────────
   const playerLabel = (p: Player) => {
-    if (p === 'p1') return 'Player 1';
-    if (p === 'p2') return ui.mode === 'cpu' ? 'CPU' : 'Player 2';
+    if (p === 'p1') return 'ソーダ';
+    if (p === 'p2') return ui.mode === 'cpu' ? 'CPU' : 'オレンジ';
     if (p === 'p3') return 'Player 3';
     return 'Player 4';
   };
 
   const statusColor = () => {
-    if (ui.status === 'waiting') return '#60a5fa';
+    if (ui.status === 'waiting') return THEME.sub;
     if (ui.status === 'won' && ui.winner) return COLOR[ui.winner];
-    if (ui.status === 'draw') return '#fbbf24';
+    if (ui.status === 'draw') return THEME.accent;
     return COLOR[ui.currentPlayer];
   };
 
   const statusText = () => {
-    if (ui.status === 'waiting') return waitingForStart ? 'ホストを待っています…' : 'Waiting for players…';
-    if (ui.status === 'won' && ui.winner) return `${playerLabel(ui.winner)} WIN 🎉`;
-    if (ui.status === 'draw') return 'DRAW';
+    if (ui.status === 'waiting') return waitingForStart ? 'ホストを待っています…' : 'みんなを待っています…';
+    if (ui.status === 'won' && ui.winner) return `${playerLabel(ui.winner)}の勝ち！`;
+    if (ui.status === 'draw') return '引き分け';
     const isMyTurnNow =
       !(ui.mode === 'cpu' && ui.currentPlayer === 'p2') &&
       !(ui.mode === 'online' && ui.currentPlayer !== onlineRef.current.myRole);
-    if (actionMode === 'bomb' && isMyTurnNow) return '💣 相手のブロックをタップ';
+    if (actionMode === 'bomb' && isMyTurnNow) return 'ばくだんを しかける';
     if (ui.mode === 'online') {
       return ui.currentPlayer === onlineRef.current.myRole
-        ? 'Your Turn'
-        : `${playerLabel(ui.currentPlayer)}'s Turn`;
+        ? 'あなたの番'
+        : `${playerLabel(ui.currentPlayer)}の番`;
     }
-    return `${playerLabel(ui.currentPlayer)}'s Turn`;
+    return `${playerLabel(ui.currentPlayer)}の番`;
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: '#060c1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 16, fontFamily: '"Inter", system-ui, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`, color: THEME.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 16, fontFamily: FONTS.body }}>
 
-      {/* Player turn indicator + bomb button */}
-      {(ui.status === 'playing' || ui.status === 'won' || ui.status === 'draw' || ui.status === 'waiting') && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor(), boxShadow: `0 0 10px ${statusColor()}` }} />
-          <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: 2, color: statusColor(), textTransform: 'uppercase' }}>
-            {statusText()}
-          </span>
-          {ui.status === 'playing' && autoDropMsg && (
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', letterSpacing: 1 }}>
-              ⏰ 時間切れ！
+      {/* Turn band — the current player's color + mark, readable from a distance */}
+      {(ui.status === 'playing' || ui.status === 'won' || ui.status === 'draw' || ui.status === 'waiting') && (() => {
+        const clr = statusColor();
+        const markPlayer: Player | null =
+          ui.status === 'won' ? ui.winner : ui.status === 'playing' ? ui.currentPlayer : null;
+        const timerColor = countdown === null ? THEME.accent : countdown > 10 ? THEME.accent : THEME.fuse;
+        const timerPct = countdown === null ? 0 : (countdown / TURN_TIMEOUT_SEC) * 100;
+        const isCpuTurn = ui.mode === 'cpu' && ui.currentPlayer === 'p2';
+        const isRemoteTurn = ui.mode === 'online' && ui.currentPlayer !== onlineRef.current.myRole;
+        // The 34x34 slot is always reserved so the band never changes height between turns
+        const slot: 'timer' | 'thinking' | 'idle' | 'none' =
+          ui.status !== 'playing' ? 'none'
+          : isCpuTurn ? 'thinking'
+          : countdown !== null && !autoDropMsg ? 'timer'
+          : 'idle';
+        return (
+          <div style={{
+            width: canvasCols * cellPx, maxWidth: 'calc(100vw - 32px)', minHeight: 54,
+            display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 16,
+            background: `linear-gradient(90deg, ${hexToRgba(clr, 0.35)}, ${hexToRgba(clr, 0.08)})`,
+            boxShadow: `inset 0 0 0 2px ${hexToRgba(clr, 0.6)}`,
+            transition: 'background 0.25s ease-out, box-shadow 0.25s ease-out',
+          }}>
+            {markPlayer && <GummyChip player={markPlayer} size={22} />}
+            <span style={{ fontFamily: FONTS.heading, fontSize: 15, color: THEME.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {statusText()}
             </span>
-          )}
-          {ui.status === 'playing' && !autoDropMsg && countdown !== null && (
-            <span style={{
-              fontSize: 12, fontWeight: 700,
-              color: countdown > 20 ? '#10b981' : countdown > 10 ? '#fbbf24' : '#ef4444',
-              minWidth: 34, textAlign: 'right',
-            }}>{countdown}s</span>
-          )}
-          {/* Bomb button — shown only on the player's own turn */}
-          {ui.status === 'playing' && (() => {
-            const isMyTurn =
-              !(ui.mode === 'cpu' && ui.currentPlayer === 'p2') &&
-              !(ui.mode === 'online' && ui.currentPlayer !== onlineRef.current.myRole);
-            if (!isMyTurn) return null;
-            const remaining = bombsRemaining[ui.currentPlayer];
-            const active = actionMode === 'bomb';
-            return (
-              <button
-                onClick={() => {
-                  const next: 'drop' | 'bomb' = active ? 'drop' : 'bomb';
-                  actionModeRef.current = next;
-                  setActionMode(next);
-                  if (next === 'drop') bombHoverCellRef.current = null;
-                }}
-                disabled={remaining === 0 && !active}
-                style={{
-                  position: 'relative', width: 44, height: 44, borderRadius: 10, flexShrink: 0,
-                  border: `2px solid ${active ? '#ef4444' : remaining === 0 ? '#1e293b' : '#475569'}`,
-                  background: active ? 'rgba(239,68,68,0.18)' : 'rgba(15,23,42,0.85)',
-                  color: '#fff', fontSize: 20, lineHeight: 1,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: remaining === 0 && !active ? 'not-allowed' : 'pointer',
-                  boxShadow: active ? '0 0 14px rgba(239,68,68,0.6)' : 'none',
-                  fontFamily: 'inherit', padding: 0,
-                  opacity: remaining === 0 && !active ? 0.35 : 1,
-                  transition: 'box-shadow 0.15s, border-color 0.15s, background 0.15s',
-                }}
-              >
-                💣
-                <span style={{
-                  position: 'absolute', top: 2, right: 4,
-                  fontSize: 10, fontWeight: 800, lineHeight: 1,
-                  color: remaining > 0 ? '#10b981' : '#475569',
-                }}>{remaining}</span>
-              </button>
-            );
-          })()}
-        </div>
-      )}
+            {ui.status === 'playing' && autoDropMsg && (
+              <span style={{ fontSize: 12, fontWeight: 800, color: THEME.accent, whiteSpace: 'nowrap' }}>時間切れ！</span>
+            )}
+            <div style={{ marginLeft: 'auto', width: 34, height: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}>
+              {slot === 'timer' && (
+                <div className="slot-fade" style={{
+                  width: 34, height: 34, borderRadius: '50%', display: 'grid', placeItems: 'center',
+                  opacity: isRemoteTurn ? 0.6 : 1,
+                  background: `conic-gradient(${timerColor} 0 ${timerPct}%, rgba(255,255,255,0.12) ${timerPct}% 100%)`,
+                }}>
+                  <span style={{
+                    width: 26, height: 26, borderRadius: '50%', background: THEME.bg,
+                    display: 'grid', placeItems: 'center', fontFamily: FONTS.logo, fontSize: 13, color: THEME.text,
+                  }}>{countdown}</span>
+                </div>
+              )}
+              {slot === 'thinking' && (
+                <div className="slot-fade" aria-label="考え中" style={{ display: 'flex', gap: 3 }}>
+                  {[0, 1, 2].map(i => (
+                    <span key={i} className="thinking-dot" style={{
+                      width: 8, height: 8, borderRadius: '30%', background: COLOR.p2, animationDelay: `${i * 0.2}s`,
+                    }} />
+                  ))}
+                </div>
+              )}
+              {slot === 'idle' && (
+                <div className="slot-fade" style={{ width: 34, height: 34, borderRadius: '50%', boxShadow: 'inset 0 0 0 4px rgba(255,255,255,0.12)', opacity: 0.6 }} />
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Canvas — horizontally scrollable for wide boards */}
       <div style={{ position: 'relative', overflowX: 'auto', maxWidth: '100vw' }}>
         <canvas
           ref={canvasRef}
-          width={canvasCols * cellPx}
-          height={(PREVIEW_ROWS + ROWS) * cellPx}
+          width={Math.round(canvasCols * cellPx * dpr)}
+          height={Math.round((PREVIEW_ROWS + ROWS) * cellPx * dpr)}
           onMouseMove={handleMouseMove}
           onClick={handleClick}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          style={{ borderRadius: 14, display: 'block', cursor: ui.status === 'playing' ? (actionMode === 'bomb' ? 'crosshair' : 'crosshair') : 'default', touchAction: actionMode === 'bomb' ? 'none' : 'pan-x' }}
+          style={{ width: canvasCols * cellPx, height: (PREVIEW_ROWS + ROWS) * cellPx, borderRadius: 14, display: 'block', cursor: ui.status === 'playing' ? (actionMode === 'bomb' ? 'crosshair' : 'crosshair') : 'default', touchAction: actionMode === 'bomb' ? 'none' : 'pan-x' }}
         />
 
         {/* ── Guest waiting for host overlay ──────────────────────────────── */}
         {waitingForStart && (
           <div style={{
             position: 'absolute', inset: 0, borderRadius: 14,
-            background: 'rgba(6,12,26,0.92)',
+            background: hexToRgba(THEME.bg, 0.94),
             display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: 24,
           }}>
             <div style={{ fontSize: 48 }}>⏳</div>
-            <div style={{ color: '#60a5fa', fontSize: 18, fontWeight: 700 }}>
+            <div style={{ color: '#36C2F0', fontSize: 18, fontWeight: 700 }}>
               ホストがゲームを準備中…
             </div>
-            <div style={{ color: '#10b981', fontSize: 15, fontWeight: 700 }}>
+            <div style={{ color: '#FFE14D', fontSize: 15, fontWeight: 700 }}>
               {connectedCount} 人が接続中
             </div>
-            <div style={{ color: '#475569', fontSize: 13 }}>
+            <div style={{ color: '#BFAED6', fontSize: 13 }}>
               全員が揃うまで待ちます
             </div>
             <button
               onClick={() => { leaveOnlineRoom(); patchUi({ status: 'idle', mode: 'online' }); }}
-              style={{ padding: '10px 28px', borderRadius: 10, border: 'none', background: '#334155', color: '#fff', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}
+              style={{ padding: '10px 28px', borderRadius: 10, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}
             >
               キャンセル
             </button>
@@ -1564,15 +1672,15 @@ export default function App() {
         {disconnectMsg && (
           <div style={{
             position: 'absolute', inset: 0, borderRadius: 14,
-            background: 'rgba(6,12,26,0.92)',
+            background: hexToRgba(THEME.bg, 0.94),
             display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: 24,
           }}>
             <div style={{ fontSize: 48 }}>📡</div>
-            <div style={{ color: '#f87171', fontSize: 20, fontWeight: 700 }}>{disconnectMsg}</div>
+            <div style={{ color: '#FF7A59', fontSize: 20, fontWeight: 700 }}>{disconnectMsg}</div>
             <button
               onClick={() => { leaveOnlineRoom(); patchUi({ status: 'idle', mode: 'online' }); }}
-              style={{ padding: '12px 32px', borderRadius: 10, border: 'none', background: '#334155', color: '#fff', fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}
+              style={{ padding: '12px 32px', borderRadius: 10, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}
             >
               メニューへ
             </button>
@@ -1583,38 +1691,25 @@ export default function App() {
         {(ui.status === 'idle' || ui.status === 'waiting') && !waitingForStart && (
           <div style={{
             position: 'absolute', inset: 0, borderRadius: 14,
-            background: 'rgba(6,12,26,0.94)',
-            display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 44,
+            background: hexToRgba(THEME.bg, 0.96),
+            display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '16px 0',
+            alignItems: 'center', justifyContent: 'safe center', gap: 22,
           }}>
 
             {/* ── Normal mode select ── */}
             {ui.status === 'idle' && ui.mode !== 'online' && (<>
               <div style={{ textAlign: 'center' }}>
-                <div style={{
-                  fontSize: 54, fontWeight: 900, letterSpacing: 10,
-                  background: 'linear-gradient(135deg, #60a5fa 0%, #818cf8 55%, #c084fc 100%)',
-                  WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', lineHeight: 1.1,
-                }}>
-                  BLOCK FIVE
-                </div>
-                <p style={{ color: '#334155', fontSize: 12, marginTop: 10, letterSpacing: 3, textTransform: 'uppercase' }}>
-                  Physics · Strategy · 5-in-a-row
+                <GummyLogo />
+                <p style={{ fontFamily: FONTS.heading, color: THEME.muted, fontSize: 15, marginTop: 12 }}>
+                  ぷにっと落として、5つそろえろ
                 </p>
               </div>
-              <div style={{ color: '#475569', fontSize: 12, textAlign: 'center', lineHeight: 1.7 }}>
-                <span>5マス揃えたら勝利</span>
-                <span style={{ margin: '0 8px', color: '#1e293b' }}>·</span>
-                <span>好きな列に自由落下</span>
-                <span style={{ margin: '0 8px', color: '#1e293b' }}>·</span>
-                <span>💣 爆弾で相手ブロックを破壊（2ターン後爆発）</span>
-              </div>
-              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 280, padding: '0 16px' }}>
                 {([
-                  { mode: '2player' as GameMode, icon: '👥', label: '2 Player', sub: 'Same device' , color: COLOR.p1 },
-                  { mode: 'online'  as GameMode, icon: '🌐', label: 'Online',   sub: 'Remote match', color: '#10b981' },
-                  { mode: 'cpu'     as GameMode, icon: '🤖', label: 'vs CPU',   sub: 'Challenge AI', color: COLOR.p2 },
-                ]).map(({ mode, icon, label, sub, color }) => (
+                  { mode: 'cpu'     as GameMode, label: 'CPUとあそぶ',   bg: THEME.accent, fg: THEME.bg },
+                  { mode: '2player' as GameMode, label: 'ふたりで（1台を交代で）', bg: THEME.sub,    fg: THEME.bg },
+                  { mode: 'online'  as GameMode, label: 'オンライン対戦', bg: 'transparent', fg: THEME.text },
+                ]).map(({ mode, label, bg, fg }) => (
                   <button key={mode}
                     onClick={() => {
                       if (mode === 'online') {
@@ -1625,33 +1720,31 @@ export default function App() {
                       }
                     }}
                     style={{
-                      width: 136, padding: '26px 14px', borderRadius: 16,
-                      border: `1.5px solid ${hexToRgba(color, 0.45)}`,
-                      background: `linear-gradient(150deg, ${hexToRgba(color, 0.14)} 0%, ${hexToRgba(color, 0.04)} 100%)`,
-                      boxShadow: `0 0 32px ${hexToRgba(color, 0.1)}, inset 0 1px 0 ${hexToRgba('#ffffff', 0.07)}`,
-                      cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
-                      fontFamily: 'inherit', transition: 'transform 0.15s, box-shadow 0.15s',
+                      width: '100%', padding: '15px 16px', borderRadius: 22, border: 0,
+                      background: bg, color: fg, fontFamily: FONTS.heading, fontSize: 17, cursor: 'pointer',
+                      boxShadow: bg === 'transparent'
+                        ? `inset 0 0 0 2px ${THEME.glass}`
+                        : 'inset 0 -5px 0 rgba(0,0,0,0.2), inset 0 3px 0 rgba(255,255,255,0.4)',
+                      transition: 'transform 0.15s ease-out',
                     }}
-                    onMouseEnter={e => {
-                      (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-3px)';
-                      (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 0 48px ${hexToRgba(color, 0.22)}, inset 0 1px 0 ${hexToRgba('#ffffff', 0.1)}`;
-                    }}
-                    onMouseLeave={e => {
-                      (e.currentTarget as HTMLButtonElement).style.transform = '';
-                      (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 0 32px ${hexToRgba(color, 0.1)}, inset 0 1px 0 ${hexToRgba('#ffffff', 0.07)}`;
-                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = ''; }}
                   >
-                    <span style={{ fontSize: 38 }}>{icon}</span>
-                    <span style={{ color: '#f1f5f9', fontWeight: 700, fontSize: 15, letterSpacing: 1 }}>{label}</span>
-                    <span style={{ color: '#475569', fontSize: 11, letterSpacing: 0.5 }}>{sub}</span>
+                    {label}
                   </button>
                 ))}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: '#334155', fontSize: 11, letterSpacing: 1 }}>格子柄</span>
+              <div style={{ color: THEME.muted, fontSize: 12, textAlign: 'center', lineHeight: 1.7, padding: '0 16px' }}>
+                たて・よこ・ななめに 5こ そろえたら かち！<br />
+                ばくだんは 2手あとに まわり十字が 消えるよ
+              </div>
+              <div
+                onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', cursor: 'pointer' }}
+              >
+                <span style={{ color: THEME.muted, fontSize: 13 }}>ますめを表示</span>
                 <div
-                  onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
-                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? '#3b82f6' : '#1e293b', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
+                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? THEME.p1.base : 'rgba(255,255,255,0.12)', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
                 >
                   <div style={{ position: 'absolute', top: 2, left: showGrid ? 17 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
                 </div>
@@ -1661,10 +1754,9 @@ export default function App() {
             {/* ── Online sub-menu ── */}
             {ui.status === 'idle' && ui.mode === 'online' && (<>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 36, marginBottom: 6 }}>🌐</div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: '#f1f5f9', letterSpacing: 4 }}>ONLINE MATCH</div>
-                <p style={{ color: '#475569', fontSize: 12, marginTop: 8, letterSpacing: 2 }}>
-                  Create a room or join with a code
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#FFF6EC', letterSpacing: 4 }}>オンライン対戦</div>
+                <p style={{ color: '#BFAED6', fontSize: 12, marginTop: 8, letterSpacing: 2 }}>
+                  ルームを作るか、4けたのコードで参加
                 </p>
               </div>
 
@@ -1673,7 +1765,7 @@ export default function App() {
 
                   {/* Player count selector */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
-                    <div style={{ color: '#64748b', fontSize: 11, letterSpacing: 2, textTransform: 'uppercase' }}>プレイ人数</div>
+                    <div style={{ color: '#BFAED6', fontSize: 11, letterSpacing: 2, textTransform: 'uppercase' }}>プレイ人数</div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       {([2, 3, 4] as PlayerCount[]).map(n => (
                         <button
@@ -1681,9 +1773,9 @@ export default function App() {
                           onClick={() => setSelectedPlayerCount(n)}
                           style={{
                             width: 56, height: 40, borderRadius: 8,
-                            border: `1.5px solid ${selectedPlayerCount === n ? '#10b981' : '#1e293b'}`,
-                            background: selectedPlayerCount === n ? 'rgba(16,185,129,0.15)' : 'transparent',
-                            color: selectedPlayerCount === n ? '#10b981' : '#475569',
+                            border: `1.5px solid ${selectedPlayerCount === n ? '#FFE14D' : 'rgba(255,255,255,0.12)'}`,
+                            background: selectedPlayerCount === n ? 'rgba(255,225,77,0.15)' : 'transparent',
+                            color: selectedPlayerCount === n ? '#FFE14D' : '#BFAED6',
                             fontSize: 16, fontWeight: 700,
                             cursor: 'pointer', fontFamily: 'inherit',
                           }}
@@ -1699,23 +1791,23 @@ export default function App() {
                     disabled={isConnecting}
                     style={{
                       width: 220, padding: '16px 20px', borderRadius: 12,
-                      border: '1.5px solid #10b981', background: 'rgba(16,185,129,0.12)',
-                      color: '#10b981', fontSize: 14, fontWeight: 700, letterSpacing: 1,
+                      border: '1.5px solid #FFE14D', background: 'rgba(255,225,77,0.12)',
+                      color: '#FFE14D', fontSize: 14, fontWeight: 700, letterSpacing: 1,
                       cursor: isConnecting ? 'wait' : 'pointer', fontFamily: 'inherit',
                     }}
                   >
-                    {isConnecting ? '作成中…' : '🏠 ルームを作る（P1）'}
+                    {isConnecting ? '作成中…' : 'ルームを作る'}
                   </button>
                   <button
                     onClick={() => { setOnlineScreen('join'); setOnlineError(''); }}
                     style={{
                       width: 220, padding: '16px 20px', borderRadius: 12,
-                      border: '1.5px solid #60a5fa', background: 'rgba(96,165,250,0.10)',
-                      color: '#60a5fa', fontSize: 14, fontWeight: 700, letterSpacing: 1,
+                      border: '1.5px solid #36C2F0', background: 'rgba(54,194,240,0.10)',
+                      color: '#36C2F0', fontSize: 14, fontWeight: 700, letterSpacing: 1,
                       cursor: 'pointer', fontFamily: 'inherit',
                     }}
                   >
-                    🔑 ルームに参加
+                    ルームに参加
                   </button>
                 </div>
               )}
@@ -1731,8 +1823,8 @@ export default function App() {
                     onKeyDown={e => e.key === 'Enter' && joinOnlineRoom()}
                     style={{
                       width: 180, padding: '12px 16px', borderRadius: 10,
-                      border: '1.5px solid #334155', background: '#0f172a',
-                      color: '#f1f5f9', fontSize: 24, fontWeight: 700, letterSpacing: 8,
+                      border: '1.5px solid rgba(255,255,255,0.2)', background: '#2B1B3D',
+                      color: '#FFF6EC', fontSize: 24, fontWeight: 700, letterSpacing: 8,
                       textAlign: 'center', fontFamily: 'monospace', outline: 'none',
                     }}
                     autoFocus
@@ -1743,8 +1835,8 @@ export default function App() {
                       disabled={isConnecting}
                       style={{
                         padding: '12px 24px', borderRadius: 10,
-                        border: '1.5px solid #60a5fa', background: 'rgba(96,165,250,0.12)',
-                        color: '#60a5fa', fontSize: 13, fontWeight: 700,
+                        border: '1.5px solid #36C2F0', background: 'rgba(54,194,240,0.12)',
+                        color: '#36C2F0', fontSize: 13, fontWeight: 700,
                         cursor: isConnecting ? 'wait' : 'pointer', fontFamily: 'inherit',
                       }}
                     >
@@ -1754,8 +1846,8 @@ export default function App() {
                       onClick={() => { setOnlineScreen('menu'); setOnlineError(''); }}
                       style={{
                         padding: '12px 20px', borderRadius: 10,
-                        border: '1.5px solid #334155', background: 'transparent',
-                        color: '#475569', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+                        border: '1.5px solid rgba(255,255,255,0.2)', background: 'transparent',
+                        color: '#BFAED6', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
                       }}
                     >戻る</button>
                   </div>
@@ -1763,31 +1855,31 @@ export default function App() {
               )}
 
               {onlineError && (
-                <p style={{ color: '#ef4444', fontSize: 12, marginTop: -20 }}>{onlineError}</p>
+                <p style={{ color: '#FF3B5C', fontSize: 12, marginTop: -20 }}>{onlineError}</p>
               )}
 
               <button
                 onClick={() => patchUi({ status: 'idle', mode: '2player' })}
                 style={{
-                  padding: '8px 18px', borderRadius: 8,
-                  border: '1px solid #1e293b', background: 'transparent',
-                  color: '#334155', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', letterSpacing: 1,
+                  padding: '12px 24px', borderRadius: 16,
+                  border: `2px solid ${THEME.glass}`, background: 'transparent',
+                  color: THEME.text, fontSize: 14, cursor: 'pointer', fontFamily: FONTS.heading,
                 }}
-              >← Back to menu</button>
+              >← もどる</button>
             </>)}
 
             {/* ── Waiting for players (host) ── */}
             {ui.status === 'waiting' && (<>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 40, marginBottom: 8 }}>⏳</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#f1f5f9', letterSpacing: 2 }}>
-                  Waiting for players
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#FFF6EC', letterSpacing: 2 }}>
+                  みんなを待っています
                 </div>
-                <p style={{ color: '#10b981', fontSize: 16, fontWeight: 700, marginTop: 10 }}>
+                <p style={{ color: '#FFE14D', fontSize: 16, fontWeight: 700, marginTop: 10 }}>
                   {connectedCount} / {selectedPlayerCount} 人参加済み
                 </p>
-                <p style={{ color: '#475569', fontSize: 12, marginTop: 4 }}>
-                  Share this code with your friends
+                <p style={{ color: '#BFAED6', fontSize: 12, marginTop: 4 }}>
+                  このコードを友だちに教えてね
                 </p>
               </div>
               <div style={{
@@ -1795,9 +1887,9 @@ export default function App() {
               }}>
                 <div style={{
                   fontSize: 52, fontWeight: 900, letterSpacing: 16,
-                  color: '#10b981', fontFamily: 'monospace',
-                  background: 'rgba(16,185,129,0.08)', padding: '16px 32px', borderRadius: 14,
-                  border: '2px solid rgba(16,185,129,0.3)',
+                  color: '#FFE14D', fontFamily: 'monospace',
+                  background: 'rgba(255,225,77,0.08)', padding: '16px 32px', borderRadius: 14,
+                  border: '2px solid rgba(255,225,77,0.3)',
                 }}>
                   {createdCode}
                 </div>
@@ -1810,19 +1902,19 @@ export default function App() {
                   }}
                   style={{
                     padding: '8px 20px', borderRadius: 8,
-                    border: `1px solid ${codeCopied ? '#10b981' : '#334155'}`,
-                    background: codeCopied ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.04)',
-                    color: codeCopied ? '#10b981' : '#94a3b8',
+                    border: `1px solid ${codeCopied ? '#FFE14D' : 'rgba(255,255,255,0.2)'}`,
+                    background: codeCopied ? 'rgba(255,225,77,0.1)' : 'rgba(255,255,255,0.04)',
+                    color: codeCopied ? '#FFE14D' : '#BFAED6',
                     fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
                     transition: 'all 0.2s',
                   }}
-                >{codeCopied ? '✅ Copied!' : '📋 Copy code'}</button>
+                >{codeCopied ? 'コピーしました' : 'コードをコピー'}</button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: '#334155', fontSize: 11, letterSpacing: 1 }}>格子柄</span>
+                <span style={{ color: '#BFAED6', fontSize: 13 }}>ますめを表示</span>
                 <div
                   onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
-                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? '#3b82f6' : '#1e293b', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
+                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? '#36C2F0' : 'rgba(255,255,255,0.12)', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
                 >
                   <div style={{ position: 'absolute', top: 2, left: showGrid ? 17 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
                 </div>
@@ -1831,11 +1923,11 @@ export default function App() {
               <button
                 onClick={() => { leaveOnlineRoom(); patchUi({ status: 'idle', mode: 'online' }); }}
                 style={{
-                  padding: '8px 18px', borderRadius: 8,
-                  border: '1px solid #1e293b', background: 'transparent',
-                  color: '#334155', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', letterSpacing: 1,
+                  padding: '12px 24px', borderRadius: 16,
+                  border: `2px solid ${THEME.glass}`, background: 'transparent',
+                  color: THEME.text, fontSize: 14, cursor: 'pointer', fontFamily: FONTS.heading,
                 }}
-              >Cancel</button>
+              >やめる</button>
             </>)}
           </div>
         )}
@@ -1851,23 +1943,153 @@ export default function App() {
             whiteSpace: 'nowrap',
           }}>
             {ui.mode !== 'online' && (
-              <button onClick={() => startGame(ui.mode)} style={actionBtn('#16a34a')}>Play Again</button>
+              <button onClick={() => startGame(ui.mode)} style={actionBtn('primary')}>もう一回</button>
             )}
-            <button onClick={resetGame} style={actionBtn('#334155')}>Main Menu</button>
+            <button onClick={resetGame} style={actionBtn('ghost')}>メニュー</button>
           </div>
         )}
       </div>
 
+      {/* Bottom bar — always shown while playing (fixed height) so the board never shifts */}
+      {ui.status === 'playing' && (() => {
+        const isMyTurn =
+          !(ui.mode === 'cpu' && ui.currentPlayer === 'p2') &&
+          !(ui.mode === 'online' && ui.currentPlayer !== onlineRef.current.myRole);
+        const me: Player = ui.mode === 'cpu' ? 'p1'
+          : ui.mode === 'online' ? (onlineRef.current.myRole ?? 'p1')
+          : ui.currentPlayer;
+        const playerCount = canvasCols >= 40 ? 4 : canvasCols >= 20 ? 3 : 2;
+        const opponents = (['p1', 'p2', 'p3', 'p4'] as Player[]).slice(0, playerCount).filter(p => p !== me);
+        const remaining = bombsRemaining[me];
+        const active = actionMode === 'bomb' && isMyTurn;
+        const disabled = !isMyTurn || (remaining === 0 && !active);
+        const warn = isMyTurn && timeoutWarnPlayer === ui.currentPlayer;
+        const hint = !isMyTurn
+          ? (ui.mode === 'cpu' ? 'CPUが考え中…' : 'あいての番。少し待っててね')
+          : active
+            ? (bombNotice ? 'そこには しかけられないよ。あいてのグミをタップ' : 'あいてのグミをタップ。2手あとに まわり十字が消える（自分のグミも）')
+            : warn ? 'あと1回 時間切れになると負け！' : 'おとしたい場所をタップ';
+        return (
+          <div style={{ width: canvasCols * cellPx, maxWidth: 'calc(100vw - 32px)', height: 52, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={() => {
+                if (fallingRef.current) return;
+                const next: 'drop' | 'bomb' = active ? 'drop' : 'bomb';
+                actionModeRef.current = next;
+                setActionMode(next);
+                if (next === 'drop') bombHoverCellRef.current = null;
+              }}
+              disabled={disabled}
+              aria-label={active ? '爆弾をやめる' : '爆弾を使う'}
+              style={{
+                position: 'relative', width: 52, height: 52, borderRadius: 16, flexShrink: 0, padding: 0,
+                border: `2px solid ${active ? THEME.fuse : THEME.glass}`,
+                background: active ? hexToRgba(THEME.fuse, 0.18) : 'rgba(255,255,255,0.06)',
+                display: 'grid', placeItems: 'center',
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                boxShadow: active ? `0 0 14px ${hexToRgba(THEME.fuse, 0.6)}` : 'none',
+                transition: 'box-shadow 0.15s, border-color 0.15s, background 0.15s',
+              }}
+            >
+              {/* Opponent's turn: dim the icon but keep the badge readable; out of bombs: grey badge */}
+              <span style={{ opacity: !isMyTurn ? 0.35 : remaining === 0 ? 0.35 : 1, transition: 'opacity 0.2s ease-out', display: 'grid' }}>
+                <BombIcon size={26} />
+              </span>
+              <span style={{
+                position: 'absolute', bottom: -6, right: -6, padding: '2px 6px', borderRadius: 999,
+                background: remaining > 0 ? '#D9244A' : '#555', color: '#fff',
+                fontSize: 12, fontWeight: 900, lineHeight: 1.2,
+              }}>×{remaining}</span>
+            </button>
+            <span className="slot-fade" key={hint} style={{ flex: 1, minWidth: 0, fontSize: 13, color: warn || bombNotice ? THEME.accent : THEME.muted, fontWeight: warn || bombNotice ? 800 : 400, lineHeight: 1.4 }}>
+              {hint}
+            </span>
+            {/* Opponents' remaining bombs — numbers only, not buttons (hidden vs CPU: it never bombs) */}
+            {ui.mode !== 'cpu' && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }} aria-label="あいての残り爆弾">
+              <span style={{ fontSize: 11, color: THEME.muted }}>あいて</span>
+              {opponents.map(p => (
+                <span key={p} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 800, color: bombsRemaining[p] > 0 ? THEME.text : THEME.muted }}>
+                  <GummyChip player={p} size={16} />
+                  <BombIcon size={12} />×{bombsRemaining[p]}
+                </span>
+              ))}
+            </div>}
+          </div>
+        );
+      })()}
+
+      {slingOn && <SlingGame onMenu={() => setSlingOn(false)} />}
     </div>
   );
 }
 
-function actionBtn(color: string): React.CSSProperties {
+// Title logo — gummy letters that squash one by one (CSS keyframes in index.css)
+const LOGO_COLORS = [THEME.p1, THEME.p2, { base: THEME.accent, deep: '#C9A800' }];
+function GummyLogo() {
+  const rows = ['BLOCK', 'FIVE'];
+  let i = 0;
+  return (
+    <div style={{ fontFamily: FONTS.logo, fontSize: 'min(52px, 12vw)', lineHeight: 1.05 }}>
+      {rows.map(row => (
+        <div key={row}>
+          {[...row].map(ch => {
+            const tone = LOGO_COLORS[i % LOGO_COLORS.length];
+            const delay = `${(i++) * 0.08}s`;
+            return (
+              <span key={`${row}-${i}`} className="gummy-letter" style={{ color: tone.base, textShadow: `0 4px 0 ${tone.deep}`, animationDelay: delay }}>
+                {ch}
+              </span>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Small CSS gummy used in DOM UI (turn band etc.) — mirrors drawGummy's mark per player
+function GummyChip({ player, size }: { player: Player; size: number }) {
+  const tone = GUMMY_TONE[player];
+  const mark: React.CSSProperties =
+    player === 'p1' ? { width: size * 0.4, height: size * 0.4, borderRadius: '50%', border: `${Math.max(2, size * 0.09)}px solid rgba(255,255,255,0.85)` }
+    : {};
+  return (
+    <span style={{
+      width: size, height: size, borderRadius: '30%', flexShrink: 0, display: 'inline-grid', placeItems: 'center',
+      background: `linear-gradient(160deg, ${tone.light}, ${tone.base} 55%, ${tone.deep})`,
+      boxShadow: 'inset 0 -3px 0 rgba(0,0,0,0.22), inset 0 2px 0 rgba(255,255,255,0.35)',
+    }}>
+      {player === 'p2'
+        ? <svg width={size * 0.6} height={size * 0.6} viewBox="-1 -1 2 2" aria-hidden><path d={starPath(0.95, 0.42)} fill="none" stroke="rgba(120,30,10,0.6)" strokeWidth={0.24} strokeLinejoin="round" /></svg>
+        : <span style={mark} />}
+    </span>
+  );
+}
+
+function BombIcon({ size }: { size: number }) {
+  return (
+    <span style={{ position: 'relative', width: size, height: size, display: 'inline-block' }}>
+      <span style={{
+        position: 'absolute', inset: 0, borderRadius: '50%',
+        background: `radial-gradient(circle at 35% 30%, #5a5a5a, ${THEME.bomb} 60%, #111)`,
+      }} />
+      <span style={{
+        position: 'absolute', right: '4%', top: '-14%', width: '34%', height: '34%',
+        borderTop: `3px solid ${THEME.fuse}`, borderRight: `3px solid ${THEME.fuse}`, borderRadius: '0 60% 0 0',
+      }} />
+    </span>
+  );
+}
+
+function actionBtn(kind: 'primary' | 'ghost'): React.CSSProperties {
   return {
-    padding: '11px 24px', borderRadius: 10,
-    border: `1.5px solid ${color}`,
-    background: 'rgba(6,12,26,0.82)', color,
-    fontSize: 13, fontWeight: 700, letterSpacing: 1,
-    cursor: 'pointer', textTransform: 'uppercase',
+    padding: '12px 24px', borderRadius: 20, border: 0,
+    background: kind === 'primary' ? THEME.accent : 'rgba(43,27,61,0.85)',
+    color: kind === 'primary' ? THEME.bg : THEME.text,
+    boxShadow: kind === 'primary'
+      ? 'inset 0 -4px 0 rgba(0,0,0,0.2), inset 0 3px 0 rgba(255,255,255,0.4)'
+      : `inset 0 0 0 2px ${THEME.glass}`,
+    fontFamily: FONTS.heading, fontSize: 14,
+    cursor: 'pointer',
   } as React.CSSProperties;
 }

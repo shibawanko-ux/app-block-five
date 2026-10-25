@@ -7,8 +7,8 @@
 }
 
 body {
-  background: #1a1a2e;
-  color: #eee;
+  background: #2B1B3D;
+  color: #FFF6EC;
   font-family: system-ui, sans-serif;
   min-height: 100vh;
 }
@@ -19,4 +19,40 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+
+/* Gummy title letters squash one after another (DESIGN.md §10) */
+.gummy-letter {
+  display: inline-block;
+  transform-origin: 50% 100%;
+  animation: gummy-squash 2.4s ease-in-out infinite;
+}
+@keyframes gummy-squash {
+  0%, 70%, 100% { transform: scale(1, 1); }
+  76% { transform: scale(1.18, 0.78); }
+  84% { transform: scale(0.92, 1.1); }
+  92% { transform: scale(1.04, 0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gummy-letter { animation: none; }
+}
+
+/* Turn band slot / bottom bar content swap (DESIGN.md §10) */
+.slot-fade { animation: slot-fade-in 0.2s ease-out; }
+@keyframes slot-fade-in { from { opacity: 0; } }
+.thinking-dot { animation: thinking 1.2s ease-in-out infinite; opacity: 0.3; }
+@keyframes thinking { 0%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .slot-fade { animation: none; }
+  .thinking-dot { animation: none; opacity: 1; }
+}
+
+/* Pull-everything game (src/sling): ready bomb button pulse, result card rise (DESIGN.md §10) */
+.bomb-ready { animation: bomb-ready 1s ease-in-out infinite; }
+@keyframes bomb-ready { 50% { box-shadow: 0 0 14px rgba(255,59,92,0.7); border-color: #FF3B5C; } }
+.result-rise { animation: result-rise 0.35s ease-out both; }
+@keyframes result-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .bomb-ready { animation: none; border-color: #FF3B5C !important; }
+  .result-rise { animation: none; }
 }
