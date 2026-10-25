@@ -44,7 +44,7 @@ interface Shard { x: number; y: number; vx: number; vy: number; rot: number; vr:
 
 export interface SlingUi {
   current: SPlayer; winner: SPlayer | null; isDraw: boolean; endNote: string; holding: Holding;
-  bombs: Record<SPlayer, number>; charge: Record<SPlayer, number>; wins: Record<SPlayer, number>;
+  bombs: Record<SPlayer, number>; charge: Record<SPlayer, number>; bombUsed: Record<SPlayer, boolean>; wins: Record<SPlayer, number>;
   gameOver: boolean; busy: boolean; cpuTurn: boolean;
 }
 
@@ -69,6 +69,7 @@ export class SlingEngine {
   holding: Holding = 'gummy';
   bombs: Record<SPlayer, number> = { p1: 0, p2: 0 };
   charge: Record<SPlayer, number> = { p1: 0, p2: 0 };
+  bombUsed: Record<SPlayer, boolean> = { p1: false, p2: false };   // one bomb per game
   wins: Record<SPlayer, number> = { p1: 0, p2: 0 };
   private nextStarter: SPlayer = 'p1';
   private winCells: [number, number][] | null = null;
@@ -125,7 +126,7 @@ export class SlingEngine {
   newGame() {
     this.grid = emptyGrid();
     this.current = this.nextStarter; this.winner = null; this.isDraw = false; this.endNote = ''; this.gameOver = false;
-    this.bombs = { p1: 0, p2: 0 }; this.charge = { p1: 0, p2: 0 }; this.holding = 'gummy'; this.winCells = null;
+    this.bombs = { p1: 0, p2: 0 }; this.charge = { p1: 0, p2: 0 }; this.bombUsed = { p1: false, p2: false }; this.holding = 'gummy'; this.winCells = null;
     this.flash = null; this.slip = null; this.hits = []; this.bombGotFor = null; this.ripple = null; this.settleAnim = null; this.shards = [];
     this.clearFlying(); this.rebuildStatics(); this.sync();
   }
@@ -142,7 +143,7 @@ export class SlingEngine {
     if (this.holding === 'bomb' && this.bombs[this.current] === 0 && this.state === 'idle') this.holding = 'gummy';
     this.onUi({
       current: this.current, winner: this.winner, isDraw: this.isDraw, endNote: this.endNote, holding: this.holding,
-      bombs: { ...this.bombs }, charge: { ...this.charge }, wins: { ...this.wins }, gameOver: this.gameOver, busy: this.state !== 'idle', cpuTurn: this.isCpuTurn(),
+      bombs: { ...this.bombs }, charge: { ...this.charge }, bombUsed: { ...this.bombUsed }, wins: { ...this.wins }, gameOver: this.gameOver, busy: this.state !== 'idle', cpuTurn: this.isCpuTurn(),
     });
   }
 
@@ -250,7 +251,7 @@ export class SlingEngine {
         kind: 'bomb', target: { c: this.colOf(a.x), r: Math.max(-1, Math.min(ROWS - 1, Math.floor((a.y - GY) / CELL))) },
         power: pw, core: this.isCore(pw), t0: now, player: this.current, sx, sy,
       };
-      this.bombs[this.current] = 0; this.charge[this.current] = 0;   // used up the moment it is thrown, hit or miss
+      this.bombs[this.current] = 0; this.bombUsed[this.current] = true;   // used up the moment it is thrown, hit or miss — and no more this game
     }
     this.state = 'flying';
     this.sync();
@@ -287,7 +288,7 @@ export class SlingEngine {
       this.flashText(n === 1 ? 'おっと！ となりへ' : `おっと！ ${n}れつ ずれた`, col * CELL + CELL / 2, GY + row * CELL - 6);
     }
     this.rebuildStatics();
-    if (this.bombs[s.player] === 0) {
+    if (this.bombs[s.player] === 0 && !this.bombUsed[s.player]) {
       this.charge[s.player] = Math.min(BOMB_EVERY, this.charge[s.player] + 1);
       if (this.charge[s.player] === BOMB_EVERY) { this.bombs[s.player] = 1; this.bombGotFor = s.player; this.bombGotAt = performance.now() + (this.flash ? 900 : 0); }
     }

@@ -72,6 +72,7 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
     : ui.cpuTurn ? 'CPUが かんがえ中…'
     : ui.busy ? ''
     : holdingBomb ? 'よこで ねらう・すこし ひくほど うえ。きんいろで はなすと つよい'
+    : ui.bombUsed[ui.current] ? 'ばくだんは もう つかったよ（1しあい 1かい）'
     : have === 0 ? `ばくだんまで あと${BOMB_EVERY - ui.charge[ui.current]}かい` : 'ばくだんボタンを おすと つかえるよ！';
 
   return (
@@ -121,7 +122,7 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
             </button>
             <div style={{ display: 'flex', gap: 4, marginTop: 4 }} aria-label={`ばくだんまで ${ui.charge[ui.current]}/${BOMB_EVERY}`}>
               {Array.from({ length: BOMB_EVERY }, (_, i) => (
-                <i key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: i < ui.charge[ui.current] ? THEME.accent : 'rgba(255,255,255,0.2)' }} />
+                <i key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: ui.bombUsed[ui.current] ? 'rgba(255,255,255,0.08)' : i < ui.charge[ui.current] ? THEME.accent : 'rgba(255,255,255,0.2)' }} />
               ))}
             </div>
           </div>
