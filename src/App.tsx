@@ -623,7 +623,7 @@ export default function App() {
   const uiRef = useRef<UIState>(INIT_UI);
   const [ui, setUi] = useState<UIState>(INIT_UI);
   // "ふたりで" now plays the pull-everything game (docs/requirements/2026-10-26_引っぱる操作の本体移行.md)
-  const [slingOn, setSlingOn] = useState(false);
+  const [slingOn, setSlingOn] = useState<false | '2player' | 'cpu'>(false);
   const gameIdRef = useRef(0);   // bumps on start/quit so stale CPU timers don't move in a new game
   const [askQuit, setAskQuit] = useState(false);
 
@@ -1213,7 +1213,7 @@ export default function App() {
   };
 
   const startGame = (mode: GameMode) => {
-    if (mode === '2player') { setSlingOn(true); return; }
+    if (mode === '2player' || mode === 'cpu') { setSlingOn(mode); return; }
     gameIdRef.current++;
     resetBoardWidth(2); // 2player/cpu always use 10 cols
     clearPhysics();
@@ -1724,10 +1724,10 @@ export default function App() {
                 </p>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 280, padding: '0 16px' }}>
-                {/* Until CPU/online move to the pull controls, the new game sits on top (docs/requirements/2026-10-26_引っぱる操作の本体移行.md) */}
+                {/* Until online moves to the pull controls, the new games sit on top (docs/requirements/2026-10-26_引っぱる操作の本体移行.md) */}
                 {([
                   { mode: '2player' as GameMode, label: 'ふたりで（1台を交代で）', note: '', badge: true, bg: THEME.accent, fg: THEME.bg },
-                  { mode: 'cpu'     as GameMode, label: 'CPUとあそぶ', note: 'まえの あそびかた（おとす）', badge: false, bg: THEME.sub, fg: THEME.bg },
+                  { mode: 'cpu'     as GameMode, label: 'CPUとあそぶ', note: '', badge: true, bg: THEME.sub, fg: THEME.bg },
                   { mode: 'online'  as GameMode, label: 'オンライン対戦', note: 'まえの あそびかた（おとす）', badge: false, bg: 'transparent', fg: THEME.text },
                 ]).map(({ mode, label, note, badge, bg, fg }) => (
                   <button key={mode}
@@ -1750,7 +1750,7 @@ export default function App() {
                     onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)'; }}
                     onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = ''; }}
                   >
-                    {badge && (
+                    {badge && mode === '2player' && (
                       <span style={{ position: 'absolute', top: -9, right: 14, padding: '2px 8px', borderRadius: 999, background: THEME.fuse, color: '#fff', fontFamily: FONTS.heading, fontSize: 11 }}>あたらしい！</span>
                     )}
                     {label}
@@ -2042,7 +2042,7 @@ export default function App() {
         );
       })()}
 
-      {slingOn && <SlingGame onMenu={() => setSlingOn(false)} />}
+      {slingOn && <SlingGame key={slingOn} cpu={slingOn === 'cpu'} onMenu={() => setSlingOn(false)} />}
     </div>
   );
 }

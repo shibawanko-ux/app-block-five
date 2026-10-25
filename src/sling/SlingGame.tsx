@@ -5,6 +5,7 @@ import { H, SlingEngine, W, type SlingUi } from './engine';
 import { starPath } from './draw';
 import { BOMB_EVERY, NAME, other, type SPlayer } from './rules';
 
+
 const TONE = { p1: THEME.p1, p2: THEME.p2 };
 const hexA = (hex: string, a: number) => hex + Math.round(a * 255).toString(16).padStart(2, '0');
 
@@ -34,7 +35,7 @@ function BombBall() {
   );
 }
 
-export default function SlingGame({ onMenu }: { onMenu: () => void }) {
+export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void; cpu?: boolean }) {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const fxRef = useRef<HTMLCanvasElement>(null);
   const engRef = useRef<SlingEngine | null>(null);
@@ -43,12 +44,12 @@ export default function SlingGame({ onMenu }: { onMenu: () => void }) {
   const [askQuit, setAskQuit] = useState(false);   // first tap on ✕ asks, second tap leaves
 
   useEffect(() => {
-    const eng = new SlingEngine(cvRef.current!, fxRef.current!, setUi);
+    const eng = new SlingEngine(cvRef.current!, fxRef.current!, setUi, { cpu });
     engRef.current = eng;
     const dbg = window as unknown as { __sling?: SlingEngine };
     if (new URLSearchParams(location.search).has('debug')) dbg.__sling = eng;
     return () => { eng.destroy(); engRef.current = null; delete dbg.__sling; };
-  }, []);
+  }, [cpu]);
 
   // the "もういっかい" button can't be hit for 1s, so a tap meant for the board doesn't restart instantly
   const gameOver = !!ui?.gameOver;
@@ -58,15 +59,18 @@ export default function SlingGame({ onMenu }: { onMenu: () => void }) {
     return () => clearTimeout(t);
   }, [gameOver]);
 
+  const names: Record<SPlayer, string> = { p1: NAME.p1, p2: cpu ? 'CPU' : NAME.p2 };
   const width = `min(${W}px, calc(100vw - 32px), calc((100dvh - 214px) * ${W} / ${H}))`;
   const markP: SPlayer | null = ui ? (ui.isDraw ? null : ui.winner || ui.current) : null;
   const tone = markP ? TONE[markP].base : '#FFFFFF';
-  const bandText = !ui ? '' : ui.isDraw ? 'ひきわけ！' : ui.winner ? `${NAME[ui.winner]}の かち！` : `${NAME[ui.current]}の ばん`;
+  const bandText = !ui ? '' : ui.isDraw ? 'ひきわけ！' : ui.winner ? `${names[ui.winner]}の かち！` : `${names[ui.current]}の ばん`;
   const have = ui ? ui.bombs[ui.current] : 0;
   const holdingBomb = ui?.holding === 'bomb';
-  const btnDisabled = !ui || ui.gameOver || ui.busy || (!holdingBomb && have === 0);
-  const ready = !!ui && !ui.gameOver && !holdingBomb && have > 0;
-  const hint = !ui || ui.gameOver || ui.busy ? ''
+  const btnDisabled = !ui || ui.gameOver || ui.busy || ui.cpuTurn || (!holdingBomb && have === 0);
+  const ready = !!ui && !ui.gameOver && !ui.cpuTurn && !holdingBomb && have > 0;
+  const hint = !ui || ui.gameOver ? ''
+    : ui.cpuTurn ? 'CPUが かんがえ中…'
+    : ui.busy ? ''
     : holdingBomb ? 'よこで ねらう・すこし ひくほど うえ。きんいろで はなすと つよい'
     : have === 0 ? `ばくだんまで あと${BOMB_EVERY - ui.charge[ui.current]}かい` : 'ばくだんボタンを おすと つかえるよ！';
 
@@ -129,9 +133,9 @@ export default function SlingGame({ onMenu }: { onMenu: () => void }) {
         <div className="result-rise" style={{ width, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 16, background: 'rgba(255,255,255,0.08)', boxShadow: `inset 0 0 0 2px ${THEME.glass}` }}>
           {ui.winner && <PlayerChip player={ui.winner} size={28} />}
           <div style={{ flex: '1 1 120px', minWidth: 0 }}>
-            <div style={{ fontFamily: FONTS.heading, fontSize: 16, whiteSpace: 'nowrap' }}>{ui.winner ? `${NAME[ui.winner]}の かち！` : 'ひきわけ！'}</div>
+            <div style={{ fontFamily: FONTS.heading, fontSize: 16, whiteSpace: 'nowrap' }}>{ui.winner ? `${names[ui.winner]}の かち！` : 'ひきわけ！'}</div>
             <div style={{ fontSize: 13, color: THEME.muted, fontWeight: 800, marginTop: 2, whiteSpace: 'nowrap' }}>
-              ソーダ <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: 16 }}>{ui.wins.p1}</b> − <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: 16 }}>{ui.wins.p2}</b> オレンジ
+              ソーダ <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: 16 }}>{ui.wins.p1}</b> − <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: 16 }}>{ui.wins.p2}</b> {names.p2}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>

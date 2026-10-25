@@ -4,10 +4,11 @@
 import Matter from 'matter-js';
 import { COLORS } from '../theme';
 import {
-  ARM_LEN, BOMB_EVERY, COLS, LEVEL_NAME, NAME, ROWS, blastCells, compact, emptyGrid, judge, levelFromImpact, other, topEmpty,
+  ARM_LEN, BOMB_EVERY, COLS, LEVEL_NAME, NAME, ROWS, WIN_LEN, blastCells, compact, emptyGrid, judge, levelFromImpact, other, topEmpty,
   type BlastLevel, type SGrid, type SPlayer,
 } from './rules';
 import { TONE, bombShape, easeIn, easeOut, gummy, rr } from './draw';
+import { getCpuMove } from '../cpuPlayer';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
 
@@ -44,8 +45,11 @@ interface Shard { x: number; y: number; vx: number; vy: number; rot: number; vr:
 export interface SlingUi {
   current: SPlayer; winner: SPlayer | null; isDraw: boolean; endNote: string; holding: Holding;
   bombs: Record<SPlayer, number>; charge: Record<SPlayer, number>; wins: Record<SPlayer, number>;
-  gameOver: boolean; busy: boolean;
+  gameOver: boolean; busy: boolean; cpuTurn: boolean;
 }
+
+// The CPU (always p2) shows the same pull as a person: grab, pull, hold, let go
+interface CpuPlan { start: number; pullEnd: number; releaseAt: number; dx: number; dy: number }
 
 const RM = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -90,8 +94,15 @@ export class SlingEngine {
   private padHintAt = -Infinity;
   private seen: Record<Holding, boolean> = { gummy: false, bomb: false };
 
-  constructor(cv: HTMLCanvasElement, fx: HTMLCanvasElement, onUi: (ui: SlingUi) => void) {
+  private cpu: boolean;
+  private cpuPlan: CpuPlan | null = null;
+  private cpuWaitFrom = 0;
+  readonly names: Record<SPlayer, string>;
+
+  constructor(cv: HTMLCanvasElement, fx: HTMLCanvasElement, onUi: (ui: SlingUi) => void, opts: { cpu?: boolean } = {}) {
     this.cv = cv; this.fx = fx; this.onUi = onUi;
+    this.cpu = !!opts.cpu;
+    this.names = { p1: NAME.p1, p2: this.cpu ? 'CPU' : NAME.p2 };
     this.mainCtx = cv.getContext('2d')!; this.fxCtx = fx.getContext('2d')!; this.ctx = this.mainCtx;
     cv.width = W * this.dpr; cv.height = H * this.dpr;
     try { Object.assign(this.seen, JSON.parse(localStorage.getItem(DEMO_KEY) || '{}')); } catch { /* storage blocked */ }
@@ -117,9 +128,10 @@ export class SlingEngine {
     this.flash = null; this.slip = null; this.hits = []; this.bombGotFor = null; this.ripple = null; this.settleAnim = null; this.shards = [];
     this.clearFlying(); this.rebuildStatics(); this.sync();
   }
+  isCpuTurn() { return this.cpu && this.current === 'p2' && !this.gameOver; }
   resetWins() { this.wins = { p1: 0, p2: 0 }; this.newGame(); }
   toggleBomb() {
-    if (this.state !== 'idle' || this.gameOver) return;
+    if (this.state !== 'idle' || this.gameOver || this.isCpuTurn()) return;
     if (this.holding === 'bomb') this.holding = 'gummy';
     else if (this.bombs[this.current] > 0) this.holding = 'bomb';
     this.sync();
@@ -129,7 +141,7 @@ export class SlingEngine {
     if (this.holding === 'bomb' && this.bombs[this.current] === 0 && this.state === 'idle') this.holding = 'gummy';
     this.onUi({
       current: this.current, winner: this.winner, isDraw: this.isDraw, endNote: this.endNote, holding: this.holding,
-      bombs: { ...this.bombs }, charge: { ...this.charge }, wins: { ...this.wins }, gameOver: this.gameOver, busy: this.state !== 'idle',
+      bombs: { ...this.bombs }, charge: { ...this.charge }, wins: { ...this.wins }, gameOver: this.gameOver, busy: this.state !== 'idle', cpuTurn: this.isCpuTurn(),
     });
   }
 
@@ -149,7 +161,7 @@ export class SlingEngine {
   }
   private clearFlying() {
     if (this.body) Composite.remove(this.engine.world, this.body);
-    this.body = null; this.shot = null; this.fuse = null; this.explosion = null; this.stickTo = null; this.state = 'idle';
+    this.body = null; this.shot = null; this.fuse = null; this.explosion = null; this.stickTo = null; this.cpuPlan = null; this.state = 'idle';
   }
   private colOf = (x: number) => Math.max(0, Math.min(COLS - 1, Math.floor(x / CELL)));
   private topEmpty = (c: number) => topEmpty(this.grid, c);
@@ -190,12 +202,12 @@ export class SlingEngine {
   }
   private attachInput() {
     const cv = this.cv, mine = (e: PointerEvent) => e.pointerId === this.pointerId;
-    const cancel = () => { if (this.state === 'drawing') { this.state = 'idle'; this.sync(); } };
+    const cancel = () => { if (this.state === 'drawing' && !this.cpuPlan) { this.state = 'idle'; this.sync(); } };
     const on = <K extends keyof HTMLElementEventMap>(t: EventTarget, type: K | string, fn: (e: never) => void) => {
       t.addEventListener(type, fn as EventListener); this.cleanups.push(() => t.removeEventListener(type, fn as EventListener));
     };
     on(cv, 'pointerdown', (e: PointerEvent) => {
-      if (this.gameOver || this.state !== 'idle' || e.button !== 0) return;   // the result card starts the next game
+      if (this.gameOver || this.state !== 'idle' || e.button !== 0 || this.isCpuTurn()) return;   // the result card starts the next game
       const p = this.local(e);
       if (p.y < PAD_Y - 10) { this.padHintAt = performance.now(); return; }   // tapped the jar: point at the launcher
       e.preventDefault();
@@ -222,6 +234,7 @@ export class SlingEngine {
 
   private release() {
     const now = performance.now(), a = this.aimPoint(now);
+    this.cpuPlan = null;
     if (!this.isArmed()) { this.state = 'idle'; this.flashText('やめました'); this.sync(); return; }
     const { dx, dy } = this.pullVec(), sx = HOME.x + dx * 0.55, sy = HOME.y + dy * 0.55;
     if (this.holding === 'gummy') {
@@ -374,6 +387,57 @@ export class SlingEngine {
     this.sync();
   }
 
+  // ── CPU ────────────────────────────────────────────────────────────
+  private cpuStep(now: number) {
+    if (!this.isCpuTurn()) { this.cpuWaitFrom = 0; return; }
+    if (this.state === 'idle' && !this.cpuPlan) {
+      if (!this.cpuWaitFrom) { this.cpuWaitFrom = now; return; }
+      if (now - this.cpuWaitFrom < 300) return;   // a short "thinking" pause after the person's throw
+      this.cpuWaitFrom = 0;
+      this.planCpu(now);
+      return;
+    }
+    const p = this.cpuPlan;
+    if (this.state !== 'drawing' || !p) return;
+    const k = easeOut(Math.min(1, (now - p.start) / (p.pullEnd - p.start)));
+    this.pointer = { x: this.grab.x + p.dx * k, y: this.grab.y + p.dy * k };
+    if (now >= p.releaseAt) this.release();
+  }
+  private planCpu(now: number) {
+    const bomb = this.bombs.p2 > 0 ? this.bombTarget() : null;
+    this.holding = bomb ? 'bomb' : 'gummy';
+    let dx: number, dy: number;
+    if (bomb) {
+      // invert aimPoint: column from the sideways pull, row from the downward pull (half the max reaches the top)
+      const tx = bomb.c * CELL + CELL / 2, ty = GY + bomb.r * CELL + CELL / 2;
+      dx = (W / 2 - tx) * MAX_PULL / (W / 2);
+      dy = Math.max(0, Math.min(1, (GY + BOARD_H - 4 - ty) / (BOARD_H + 18))) * MAX_PULL * 0.5;
+    } else {
+      const col = getCpuMove(this.grid, 'p2', 'p1', WIN_LEN);
+      const tx = col * CELL + CELL / 2 + (Math.random() - 0.5) * CELL * 0.5;   // not always dead centre: the CPU can slip too
+      dx = (W / 2 - tx) * SENS / CELL;
+      dy = 24 + Math.random() * 16;
+    }
+    const pullMs = 300 + Math.random() * 150;
+    const holdMs = bomb ? 300 + Math.random() * 900 : 100 + Math.random() * 150;   // the bomb's power depends on when it lets go
+    this.grab = { ...HOME }; this.pointer = { ...HOME }; this.pointerId = null;
+    this.drawStart = now; this.state = 'drawing';
+    this.coreW = 0.04 + Math.random() * 0.06; this.coreLo = 0.3 + Math.random() * (0.9 - this.coreW - 0.3);
+    this.slip = null; this.flash = null; this.hits = [];
+    this.cpuPlan = { start: now, pullEnd: now + pullMs, releaseAt: now + pullMs + holdMs, dx, dy };
+    this.sync();
+  }
+  // Bomb the person's gummy whose blast (one cell up/down/left/right) removes the most of their gummies
+  private bombTarget(): { c: number; r: number } | null {
+    let best: { c: number; r: number } | null = null, bestN = 0;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      if (this.grid[r][c] !== 'p1') continue;
+      const n = blastCells(2, c, r).reduce((t, [rr, cc]) => t + (this.grid[rr][cc] === 'p1' ? 1 : this.grid[rr][cc] === 'p2' ? -1 : 0), 0);
+      if (n > bestN) { bestN = n; best = { c, r }; }
+    }
+    return bestN >= 2 ? best : null;
+  }
+
   private flashText(text: string, x = W / 2, y = GY + 40) {
     this.flashDur = Math.min(2600, 900 + text.length * 70);
     const half = Math.min(W / 2 - 4, text.length * 11);
@@ -390,6 +454,7 @@ export class SlingEngine {
       Engine.update(this.engine, 1000 / 60); this.acc -= 1000 / 60;
       if (this.explosion && this.state === 'exploding') this.explosion.frame++;
     }
+    this.cpuStep(now);
     const s = this.shot;
     if (this.state === 'falling' && this.body && s?.kind === 'gummy') {
       const v = this.body.velocity;
@@ -588,7 +653,7 @@ export class SlingEngine {
       ctx.font = `${12 + h.lvl * 3}px ${HEAD}`; ctx.textAlign = 'center'; ctx.fillText(h.text, h.x, h.y - k * 14); ctx.restore();
     }
     if (this.bombGotFor && now >= this.bombGotAt && now - this.bombGotAt < 1400) {
-      const k = (now - this.bombGotAt) / 1400, text = `${NAME[this.bombGotFor]}、ばくだん ゲット！`;
+      const k = (now - this.bombGotAt) / 1400, text = `${this.names[this.bombGotFor]}、ばくだん ゲット！`;
       ctx.save(); ctx.globalAlpha = 1 - Math.max(0, k - 0.6) / 0.4; ctx.fillStyle = COLORS.accent; ctx.font = `18px ${HEAD}`; ctx.textAlign = 'center';
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(43,27,61,0.95)'; ctx.strokeText(text, W / 2, GY + 80 - k * 8); ctx.fillText(text, W / 2, GY + 80 - k * 8); ctx.restore();
     }
@@ -638,7 +703,7 @@ export class SlingEngine {
         const { dx, dy, len } = this.pullVec();
         pulled(HOME.x + dx * 0.55, HOME.y + dy * 0.55, len);
       } else {
-        const demo = this.seen[this.holding] ? null : this.demoPose(now);
+        const demo = this.seen[this.holding] || this.isCpuTurn() ? null : this.demoPose(now);
         if (demo && demo.press) {   // the ghost finger drags the gummy/bomb so the motion reads as "pull"
           pulled(HOME.x + (demo.x - HOME.x) * 0.55, HOME.y + (demo.y - HOME.y) * 0.55, 0);
         } else {
