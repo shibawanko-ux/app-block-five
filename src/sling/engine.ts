@@ -92,6 +92,7 @@ export class SlingEngine {
   private shards: Shard[] = [];
   private bombGotFor: SPlayer | null = null; private bombGotAt = 0;
   private padHintAt = -Infinity;
+  private cpuNudgeAt = -Infinity;   // the person tried to pull during the CPU's turn
   private seen: Record<Holding, boolean> = { gummy: false, bomb: false };
 
   private cpu: boolean;
@@ -207,8 +208,10 @@ export class SlingEngine {
       t.addEventListener(type, fn as EventListener); this.cleanups.push(() => t.removeEventListener(type, fn as EventListener));
     };
     on(cv, 'pointerdown', (e: PointerEvent) => {
-      if (this.gameOver || this.state !== 'idle' || e.button !== 0 || this.isCpuTurn()) return;   // the result card starts the next game
+      if (this.gameOver || e.button !== 0) return;   // the result card starts the next game
       const p = this.local(e);
+      if (this.isCpuTurn()) { if (p.y >= PAD_Y - 10) this.cpuNudgeAt = performance.now(); return; }
+      if (this.state !== 'idle') return;
       if (p.y < PAD_Y - 10) { this.padHintAt = performance.now(); return; }   // tapped the jar: point at the launcher
       e.preventDefault();
       try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
@@ -509,8 +512,11 @@ export class SlingEngine {
     const ctx = this.ctx;
     const pg = ctx.createLinearGradient(0, PAD_Y, 0, H); pg.addColorStop(0, '#24163A'); pg.addColorStop(1, '#1A1028');
     ctx.fillStyle = pg; ctx.fillRect(0, PAD_Y, W, PAD_H);
-    ctx.strokeStyle = 'rgba(234,217,255,0.35)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.ellipse(HOME.x, HOME.y + 26, 70, 16, 0, 0, 7); ctx.stroke();
+    // the launcher ring takes the colour of whoever's turn it is
+    ctx.strokeStyle = this.gameOver ? 'rgba(234,217,255,0.35)' : TONE[this.current].base; ctx.lineWidth = 2;
+    ctx.globalAlpha = this.gameOver ? 1 : 0.7;
+    ctx.beginPath(); ctx.ellipse(HOME.x, HOME.y + 26, 70, 16, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(234,217,255,0.35)';
     ctx.beginPath(); ctx.moveTo(HOME.x - 60, HOME.y); ctx.quadraticCurveTo(HOME.x, HOME.y + 18, HOME.x + 60, HOME.y); ctx.stroke();   // slack band
     ctx.fillStyle = 'rgba(234,217,255,0.5)';
     rr(ctx, HOME.x - 63, HOME.y - 2, 6, 24, 3); ctx.fill(); rr(ctx, HOME.x + 57, HOME.y - 2, 6, 24, 3); ctx.fill();
@@ -518,11 +524,25 @@ export class SlingEngine {
       const k = (now - this.padHintAt) / 1200; ctx.strokeStyle = `rgba(255,225,77,${0.8 * (1 - k)})`; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.ellipse(HOME.x, HOME.y + 10, 80 + k * 20, 34 + k * 8, 0, 0, 7); ctx.stroke();
     }
-    if (this.state === 'idle' && !this.gameOver) {
-      ctx.fillStyle = COLORS.accent; ctx.font = `13px ${HEAD}`; ctx.textAlign = 'center';
-      const msg = now - this.padHintAt < 1500 ? 'したの グミを ひっぱってね'
+    // whose turn it is, right where the eyes and finger are (the band at the top is out of sight)
+    if (!this.gameOver) {
+      const label = `${this.names[this.current]}の ばん`, t = TONE[this.current];
+      ctx.font = `11px ${HEAD}`; const tw = ctx.measureText(label).width;
+      ctx.fillStyle = t.base; rr(ctx, 8, PAD_Y + 30, tw + 16, 22, 11); ctx.fill();
+      ctx.fillStyle = this.current === 'p1' ? '#0E3A4F' : '#4A1608'; ctx.textAlign = 'left'; ctx.fillText(label, 16, PAD_Y + 45);
+    }
+    const nudge = now - this.cpuNudgeAt < 1200;
+    if (nudge) {
+      const k = (now - this.cpuNudgeAt) / 1200; ctx.strokeStyle = `rgba(255,59,92,${0.8 * (1 - k)})`; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(HOME.x, HOME.y + 10, 80 + k * 20, 34 + k * 8, 0, 0, 7); ctx.stroke();
+    }
+    if (!this.gameOver && (this.state === 'idle' || this.isCpuTurn())) {
+      ctx.fillStyle = nudge ? COLORS.fuse : COLORS.accent; ctx.font = `13px ${HEAD}`; ctx.textAlign = 'center';
+      const msg = nudge ? 'いまは CPUの ばん だよ'
+        : this.isCpuTurn() ? 'CPUが なげるよ…'
+        : now - this.padHintAt < 1500 ? 'したの グミを ひっぱってね'
         : this.holding === 'bomb' ? 'ひっぱって、きんいろで はなす' : 'したに ひいて、よこで ねらって はなす';
-      ctx.fillText(msg, W / 2, PAD_Y + 96);
+      if (this.state === 'idle' || nudge) ctx.fillText(msg, W / 2, PAD_Y + 96);
     }
   }
 
@@ -692,7 +712,7 @@ export class SlingEngine {
     try {
       const ctx = fxCtx, bomb = this.holding === 'bomb';
       const nearSize = bomb ? BOMB_R_NEAR : CELL * 1.35;
-      const drawHeld = (x: number, y: number) => (bomb ? bombShape(ctx, x, y, BOMB_R_NEAR) : gummy(ctx, x - nearSize / 2, y - nearSize / 2, nearSize, this.current));
+      const drawHeld = (x: number, y: number, a = 1) => (bomb ? bombShape(ctx, x, y, BOMB_R_NEAR) : gummy(ctx, x - nearSize / 2, y - nearSize / 2, nearSize, this.current, a));
       ctx.strokeStyle = bomb ? 'rgba(255,59,92,0.85)' : TONE[this.current].light; ctx.lineCap = 'round';
       const pulled = (bx: number, by: number, len: number) => {
         ctx.lineWidth = 3 - Math.min(1, len / MAX_PULL);
@@ -707,9 +727,14 @@ export class SlingEngine {
         if (demo && demo.press) {   // the ghost finger drags the gummy/bomb so the motion reads as "pull"
           pulled(HOME.x + (demo.x - HOME.x) * 0.55, HOME.y + (demo.y - HOME.y) * 0.55, 0);
         } else {
+          // during the CPU's turn its gummy waits faded (not yours to grab) and shakes "no" if you touch it
+          const cpuTurn = this.isCpuTurn(), nk = (now - this.cpuNudgeAt) / 400;
+          const shakeX = cpuTurn && nk < 1 && !RM ? Math.sin(nk * Math.PI * 6) * 5 * (1 - nk) : 0;
+          ctx.globalAlpha = cpuTurn ? 0.45 : 1;
           ctx.lineWidth = 3;
           ctx.beginPath(); ctx.moveTo(HOME.x - 60, HOME.y); ctx.quadraticCurveTo(HOME.x, HOME.y + 18, HOME.x + 60, HOME.y); ctx.stroke();
-          drawHeld(HOME.x, HOME.y + (RM ? 0 : Math.sin(now / 260) * 2));
+          drawHeld(HOME.x + shakeX, HOME.y + (RM || cpuTurn ? 0 : Math.sin(now / 260) * 2), cpuTurn ? 0.45 : 1);
+          ctx.globalAlpha = 1;
         }
         if (demo) this.drawFinger(demo);
       }
