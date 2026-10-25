@@ -624,6 +624,8 @@ export default function App() {
   const [ui, setUi] = useState<UIState>(INIT_UI);
   // "ふたりで" now plays the pull-everything game (docs/requirements/2026-10-26_引っぱる操作の本体移行.md)
   const [slingOn, setSlingOn] = useState(false);
+  const gameIdRef = useRef(0);   // bumps on start/quit so stale CPU timers don't move in a new game
+  const [askQuit, setAskQuit] = useState(false);
 
   // ── Online multiplayer state ───────────────────────────────────────────────
   const onlineRef = useRef<{
@@ -883,10 +885,11 @@ export default function App() {
         startTurnTimer(next);
       }
       if (uiRef.current.mode === 'cpu' && next === 'p2') {
-        setTimeout(() => {
+        { const gid = gameIdRef.current; setTimeout(() => {
+          if (gid !== gameIdRef.current || uiRef.current.status !== 'playing') return;   // the game was quit or restarted
           const cpuCol = getCpuMove(boardRef.current, 'p2', 'p1', CFG.winLength);
           dropBlock(cpuCol * CELL + CELL / 2, 'p2');
-        }, 700);
+        }, 700); }
       }
       return;
     }
@@ -955,10 +958,11 @@ export default function App() {
           if (isDraw(postBoard)) { clearTurnTimer(); patchUi({ status: 'draw' }); return; }
           if (!(uiRef.current.mode === 'cpu' && next === 'p2')) startTurnTimer(next);
           if (uiRef.current.mode === 'cpu' && next === 'p2') {
-            setTimeout(() => {
+            { const gid = gameIdRef.current; setTimeout(() => {
+              if (gid !== gameIdRef.current || uiRef.current.status !== 'playing') return;   // the game was quit or restarted
               const cpuCol = getCpuMove(boardRef.current, 'p2', 'p1', CFG.winLength);
               dropBlock(cpuCol * CELL + CELL / 2, 'p2');
-            }, 700);
+            }, 700); }
           }
         });
         return;
@@ -972,10 +976,11 @@ export default function App() {
     }
 
     if (uiRef.current.mode === 'cpu' && next === 'p2') {
-      setTimeout(() => {
+      { const gid = gameIdRef.current; setTimeout(() => {
+        if (gid !== gameIdRef.current || uiRef.current.status !== 'playing') return;   // the game was quit or restarted
         const cpuCol = getCpuMove(newBoard, 'p2', 'p1', CFG.winLength);
         dropBlock(cpuCol * CELL + CELL / 2, 'p2');
-      }, 700);
+      }, 700); }
     }
   };
 
@@ -1209,6 +1214,7 @@ export default function App() {
 
   const startGame = (mode: GameMode) => {
     if (mode === '2player') { setSlingOn(true); return; }
+    gameIdRef.current++;
     resetBoardWidth(2); // 2player/cpu always use 10 cols
     clearPhysics();
     timeoutStreakRef.current = { p1: 0, p2: 0, p3: 0, p4: 0 };
@@ -1526,6 +1532,8 @@ export default function App() {
   };
 
   const resetGame = () => {
+    gameIdRef.current++;
+    setAskQuit(false);
     leaveOnlineRoom();
     resetBoardWidth(2);
     clearPhysics();
@@ -1557,10 +1565,10 @@ export default function App() {
     if (actionMode === 'bomb' && isMyTurnNow) return 'ばくだんを しかける';
     if (ui.mode === 'online') {
       return ui.currentPlayer === onlineRef.current.myRole
-        ? 'あなたの番'
-        : `${playerLabel(ui.currentPlayer)}の番`;
+        ? 'あなたの ばん'
+        : `${playerLabel(ui.currentPlayer)}の ばん`;
     }
-    return `${playerLabel(ui.currentPlayer)}の番`;
+    return `${playerLabel(ui.currentPlayer)}の ばん`;
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1597,7 +1605,18 @@ export default function App() {
             {ui.status === 'playing' && autoDropMsg && (
               <span style={{ fontSize: 12, fontWeight: 800, color: THEME.accent, whiteSpace: 'nowrap' }}>時間切れ！</span>
             )}
-            <div style={{ marginLeft: 'auto', width: 34, height: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}>
+            {ui.status === 'playing' && (
+              <button
+                onClick={() => { if (askQuit) resetGame(); else { setAskQuit(true); setTimeout(() => setAskQuit(false), 3000); } }}
+                aria-label="やめて メニューへ"
+                style={{
+                  marginLeft: 'auto', minWidth: 34, height: 34, flexShrink: 0, borderRadius: 999, border: 0, cursor: 'pointer', padding: askQuit ? '0 12px' : 0,
+                  background: askQuit ? THEME.accent : 'rgba(255,255,255,0.10)', color: askQuit ? THEME.bgTop : THEME.muted,
+                  fontFamily: FONTS.heading, fontSize: askQuit ? 12 : 15,
+                }}
+              >{askQuit ? 'やめる？' : '✕'}</button>
+            )}
+            <div style={{ marginLeft: ui.status === 'playing' ? 0 : 'auto', width: 34, height: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}>
               {slot === 'timer' && (
                 <div className="slot-fade" style={{
                   width: 34, height: 34, borderRadius: '50%', display: 'grid', placeItems: 'center',
@@ -1701,15 +1720,16 @@ export default function App() {
               <div style={{ textAlign: 'center' }}>
                 <GummyLogo />
                 <p style={{ fontFamily: FONTS.heading, color: THEME.muted, fontSize: 15, marginTop: 12 }}>
-                  ぷにっと落として、5つそろえろ
+                  ぷにっと引っぱって、5つそろえろ
                 </p>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 280, padding: '0 16px' }}>
+                {/* Until CPU/online move to the pull controls, the new game sits on top (docs/requirements/2026-10-26_引っぱる操作の本体移行.md) */}
                 {([
-                  { mode: 'cpu'     as GameMode, label: 'CPUとあそぶ',   bg: THEME.accent, fg: THEME.bg },
-                  { mode: '2player' as GameMode, label: 'ふたりで（1台を交代で）', bg: THEME.sub,    fg: THEME.bg },
-                  { mode: 'online'  as GameMode, label: 'オンライン対戦', bg: 'transparent', fg: THEME.text },
-                ]).map(({ mode, label, bg, fg }) => (
+                  { mode: '2player' as GameMode, label: 'ふたりで（1台を交代で）', note: '', badge: true, bg: THEME.accent, fg: THEME.bg },
+                  { mode: 'cpu'     as GameMode, label: 'CPUとあそぶ', note: 'まえの あそびかた（おとす）', badge: false, bg: THEME.sub, fg: THEME.bg },
+                  { mode: 'online'  as GameMode, label: 'オンライン対戦', note: 'まえの あそびかた（おとす）', badge: false, bg: 'transparent', fg: THEME.text },
+                ]).map(({ mode, label, note, badge, bg, fg }) => (
                   <button key={mode}
                     onClick={() => {
                       if (mode === 'online') {
@@ -1720,7 +1740,7 @@ export default function App() {
                       }
                     }}
                     style={{
-                      width: '100%', padding: '15px 16px', borderRadius: 22, border: 0,
+                      position: 'relative', width: '100%', padding: '13px 16px', borderRadius: 22, border: 0,
                       background: bg, color: fg, fontFamily: FONTS.heading, fontSize: 17, cursor: 'pointer',
                       boxShadow: bg === 'transparent'
                         ? `inset 0 0 0 2px ${THEME.glass}`
@@ -1730,13 +1750,17 @@ export default function App() {
                     onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)'; }}
                     onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = ''; }}
                   >
+                    {badge && (
+                      <span style={{ position: 'absolute', top: -9, right: 14, padding: '2px 8px', borderRadius: 999, background: THEME.fuse, color: '#fff', fontFamily: FONTS.heading, fontSize: 11 }}>あたらしい！</span>
+                    )}
                     {label}
+                    {badge && <span style={{ display: 'block', fontFamily: FONTS.body, fontWeight: 800, fontSize: 12, marginTop: 2 }}>ひっぱって なげる</span>}
+                    {note && <span style={{ display: 'block', fontFamily: FONTS.body, fontWeight: 800, fontSize: 11, marginTop: 2, opacity: 0.75 }}>{note}</span>}
                   </button>
                 ))}
               </div>
               <div style={{ color: THEME.muted, fontSize: 12, textAlign: 'center', lineHeight: 1.7, padding: '0 16px' }}>
-                たて・よこ・ななめに 5こ そろえたら かち！<br />
-                ばくだんは 2手あとに まわり十字が 消えるよ
+                たて・よこ・ななめに 5つ そろえたら かち！
               </div>
               <div
                 onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
@@ -1965,7 +1989,7 @@ export default function App() {
         const disabled = !isMyTurn || (remaining === 0 && !active);
         const warn = isMyTurn && timeoutWarnPlayer === ui.currentPlayer;
         const hint = !isMyTurn
-          ? (ui.mode === 'cpu' ? 'CPUが考え中…' : 'あいての番。少し待っててね')
+          ? (ui.mode === 'cpu' ? 'CPUが考え中…' : 'あいての ばん。少し待っててね')
           : active
             ? (bombNotice ? 'そこには しかけられないよ。あいてのグミをタップ' : 'あいてのグミをタップ。2手あとに まわり十字が消える（自分のグミも）')
             : warn ? 'あと1回 時間切れになると負け！' : 'おとしたい場所をタップ';

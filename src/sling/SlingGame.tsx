@@ -40,6 +40,7 @@ export default function SlingGame({ onMenu }: { onMenu: () => void }) {
   const engRef = useRef<SlingEngine | null>(null);
   const [ui, setUi] = useState<SlingUi | null>(null);
   const [againReady, setAgainReady] = useState(false);
+  const [askQuit, setAskQuit] = useState(false);   // first tap on ✕ asks, second tap leaves
 
   useEffect(() => {
     const eng = new SlingEngine(cvRef.current!, fxRef.current!, setUi);
@@ -80,7 +81,15 @@ export default function SlingGame({ onMenu }: { onMenu: () => void }) {
       }}>
         {markP && <PlayerChip player={markP} size={22} />}
         <span style={{ fontFamily: FONTS.heading, fontSize: 15 }}>{bandText}</span>
-        <span style={{ marginLeft: 'auto', width: 34, height: 34, flexShrink: 0 }} />
+        <button
+          onClick={() => { if (askQuit) onMenu(); else { setAskQuit(true); setTimeout(() => setAskQuit(false), 3000); } }}
+          aria-label="やめて メニューへ"
+          style={{
+            marginLeft: 'auto', minWidth: 34, height: 34, flexShrink: 0, borderRadius: 999, border: 0, cursor: 'pointer', padding: askQuit ? '0 12px' : 0,
+            background: askQuit ? THEME.accent : 'rgba(255,255,255,0.10)', color: askQuit ? THEME.bgTop : THEME.muted,
+            fontFamily: FONTS.heading, fontSize: askQuit ? 12 : 15,
+          }}
+        >{askQuit ? 'やめる？' : '✕'}</button>
         {ui?.endNote && <span style={{ flexBasis: '100%', marginLeft: 32, fontSize: 13, fontWeight: 800, color: THEME.accent }}>{ui.endNote}</span>}
       </div>
 
