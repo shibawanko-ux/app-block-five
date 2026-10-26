@@ -56,3 +56,20 @@ body {
   .bomb-ready { animation: none; border-color: #FF3B5C !important; }
   .result-rise { animation: none; }
 }
+
+/* Landscape phones (height < 500px): cover everything with "turn it upright" (DESIGN.md §5・§8). iPad landscape is unaffected. */
+.rotate-hint { display: none; }
+@media (orientation: landscape) and (max-height: 499px) {
+  .rotate-hint {
+    display: flex; position: fixed; inset: 0; z-index: 100; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+    background: #2B1B3D; color: #FFF6EC; animation: rotate-hint-in 0.3s ease-out both;
+  }
+}
+.rotate-phone { width: 34px; height: 60px; border-radius: 8px; border: 4px solid #FFE14D; position: relative; animation: rotate-phone 2.4s ease-in-out infinite; }
+.rotate-phone::after { content: ""; position: absolute; left: 50%; bottom: 4px; width: 8px; height: 3px; margin-left: -4px; border-radius: 2px; background: #FFE14D; }
+@keyframes rotate-phone { 0%, 20% { transform: rotate(-90deg); } 45%, 100% { transform: rotate(0deg); } }
+@keyframes rotate-hint-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .rotate-phone { animation: none; }
+  .rotate-hint { animation: none; }
+}

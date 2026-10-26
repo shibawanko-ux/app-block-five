@@ -1708,11 +1708,12 @@ export default function App() {
 
         {/* ── Title / Mode selection / Online / Waiting overlay ───────────── */}
         {(ui.status === 'idle' || ui.status === 'waiting') && !waitingForStart && (
+          // Full screen (not inside the old board's box), so small phones see every button (DESIGN.md §5)
           <div style={{
-            position: 'absolute', inset: 0, borderRadius: 14,
-            background: hexToRgba(THEME.bg, 0.96),
+            position: 'fixed', inset: 0, zIndex: 30,
+            background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`,
             display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '16px 0',
-            alignItems: 'center', justifyContent: 'safe center', gap: 22,
+            alignItems: 'center', justifyContent: 'safe center', gap: 18,
           }}>
 
             {/* ── Normal mode select ── */}
@@ -2043,6 +2044,12 @@ export default function App() {
       })()}
 
       {slingOn && <SlingGame key={slingOn} cpu={slingOn === 'cpu'} onMenu={() => setSlingOn(false)} />}
+
+      {/* Phones on their side (height < 500): the game is pulled downwards, so ask to turn it upright (CSS-only, index.css) */}
+      <div className="rotate-hint" role="alert">
+        <span className="rotate-phone" aria-hidden />
+        <span style={{ fontFamily: FONTS.heading, fontSize: 18 }}>たてに して あそんでね</span>
+      </div>
     </div>
   );
 }

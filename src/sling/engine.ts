@@ -57,7 +57,10 @@ export class SlingEngine {
   private cv: HTMLCanvasElement; private fx: HTMLCanvasElement;
   private mainCtx: CanvasRenderingContext2D; private fxCtx: CanvasRenderingContext2D; private ctx: CanvasRenderingContext2D;
   private onUi: (ui: SlingUi) => void;
-  private dpr = Math.min(window.devicePixelRatio || 1, 3);
+  private dpr = Math.min(window.devicePixelRatio || 1, 3);   // device pixels (overlay)
+  private rdpr = this.dpr;   // board canvas pixels: grows when the board is shown larger than 340px, so it stays sharp
+  private fs = 1;   // text scale: small boards get bigger canvas text so it stays readable (DESIGN.md §8)
+  private f = (px: number) => `${Math.round(px * this.fs)}px ${HEAD}`;
   private engine = Engine.create();
   private statics: Matter.Body[] = [];
   private raf = 0; private lastT = 0; private acc = 0;
@@ -106,7 +109,7 @@ export class SlingEngine {
     this.cpu = !!opts.cpu;
     this.names = { p1: NAME.p1, p2: this.cpu ? 'CPU' : NAME.p2 };
     this.mainCtx = cv.getContext('2d')!; this.fxCtx = fx.getContext('2d')!; this.ctx = this.mainCtx;
-    cv.width = W * this.dpr; cv.height = H * this.dpr;
+    cv.width = W * this.rdpr; cv.height = H * this.rdpr;
     try { Object.assign(this.seen, JSON.parse(localStorage.getItem(DEMO_KEY) || '{}')); } catch { /* storage blocked */ }
     Events.on(this.engine, 'collisionStart', this.onCollision);
     this.attachInput();
@@ -129,6 +132,12 @@ export class SlingEngine {
     this.bombs = { p1: 0, p2: 0 }; this.charge = { p1: 0, p2: 0 }; this.bombUsed = { p1: false, p2: false }; this.holding = 'gummy'; this.winCells = null;
     this.flash = null; this.slip = null; this.hits = []; this.bombGotFor = null; this.ripple = null; this.settleAnim = null; this.shards = [];
     this.clearFlying(); this.rebuildStatics(); this.sync();
+  }
+  // Called by the React layer with the board's on-screen width (CSS px)
+  setDisplayWidth(cssW: number) {
+    this.fs = Math.max(1, Math.min(1.35, W / cssW));
+    const rdpr = Math.min(this.dpr * Math.max(1, cssW / W), 4);
+    if (Math.abs(rdpr - this.rdpr) > 0.01) { this.rdpr = rdpr; this.cv.width = Math.round(W * rdpr); this.cv.height = Math.round(H * rdpr); }
   }
   isCpuTurn() { return this.cpu && this.current === 'p2' && !this.gameOver; }
   resetWins() { this.wins = { p1: 0, p2: 0 }; this.newGame(); }
@@ -479,7 +488,7 @@ export class SlingEngine {
 
   // ── Drawing ────────────────────────────────────────────────────────
   private draw(now: number) {
-    const ctx = this.ctx, dpr = this.dpr, ex = this.explosion;
+    const ctx = this.ctx, dpr = this.rdpr, ex = this.explosion;
     const shake = !RM && ex && ex.level === 4 && ex.frame < 16 ? Math.sin(ex.frame * 2.2) * 5 * (1 - ex.frame / 16) : 0;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); ctx.setTransform(dpr, 0, 0, dpr, dpr * shake, 0);
     ctx.fillStyle = COLORS.bgTop; ctx.fillRect(0, 0, W, GY);
@@ -500,8 +509,8 @@ export class SlingEngine {
       gummy(ctx, c * CELL + 4, gy, BLOCK, p);
     }
     if (this.state !== 'drawing' && !this.gameOver) {
-      ctx.fillStyle = 'rgba(255,246,236,0.7)'; ctx.font = `12px ${HEAD}`; ctx.textAlign = 'center';
-      ctx.fillText('たて・よこ・ななめに 5つ ならべたら かち', W / 2, 20);
+      ctx.fillStyle = 'rgba(255,246,236,0.7)'; ctx.font = this.f(12); ctx.textAlign = 'center';
+      ctx.fillText('たて・よこ・ななめに 5つ ならべたら かち', W / 2, 21, W - 12);
     }
     this.drawPad(now);
     if (this.state === 'drawing') this.drawAim(now);
@@ -528,9 +537,9 @@ export class SlingEngine {
     // whose turn it is, right where the eyes and finger are (the band at the top is out of sight)
     if (!this.gameOver) {
       const label = `${this.names[this.current]}の ばん`, t = TONE[this.current];
-      ctx.font = `11px ${HEAD}`; const tw = ctx.measureText(label).width;
-      ctx.fillStyle = t.base; rr(ctx, 8, PAD_Y + 30, tw + 16, 22, 11); ctx.fill();
-      ctx.fillStyle = this.current === 'p1' ? '#0E3A4F' : '#4A1608'; ctx.textAlign = 'left'; ctx.fillText(label, 16, PAD_Y + 45);
+      ctx.font = this.f(11); const tw = ctx.measureText(label).width, ph = 22 * this.fs;
+      ctx.fillStyle = t.base; rr(ctx, 6, PAD_Y + 41 - ph / 2, tw + 16, ph, ph / 2); ctx.fill();
+      ctx.fillStyle = this.current === 'p1' ? '#0E3A4F' : '#4A1608'; ctx.textAlign = 'left'; ctx.fillText(label, 14, PAD_Y + 41 + 4 * this.fs);
     }
     const nudge = now - this.cpuNudgeAt < 1200;
     if (nudge) {
@@ -538,12 +547,12 @@ export class SlingEngine {
       ctx.beginPath(); ctx.ellipse(HOME.x, HOME.y + 10, 80 + k * 20, 34 + k * 8, 0, 0, 7); ctx.stroke();
     }
     if (!this.gameOver && (this.state === 'idle' || this.isCpuTurn())) {
-      ctx.fillStyle = nudge ? COLORS.fuse : COLORS.accent; ctx.font = `13px ${HEAD}`; ctx.textAlign = 'center';
+      ctx.fillStyle = nudge ? COLORS.fuse : COLORS.accent; ctx.font = this.f(13); ctx.textAlign = 'center';
       const msg = nudge ? 'いまは CPUの ばん だよ'
         : this.isCpuTurn() ? 'CPUが なげるよ…'
         : now - this.padHintAt < 1500 ? 'したの グミを ひっぱってね'
         : this.holding === 'bomb' ? 'ひっぱって、きんいろで はなす' : 'したに ひいて、よこで ねらって はなす';
-      if (this.state === 'idle' || nudge) ctx.fillText(msg, W / 2, PAD_Y + 96);
+      if (this.state === 'idle' || nudge) ctx.fillText(msg, W / 2, PAD_Y + 95, W - 12);
     }
   }
 
@@ -557,18 +566,18 @@ export class SlingEngine {
       ctx.strokeStyle = COLORS.accent; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
       const landY = full ? GY + 30 : GY + this.topEmpty(col) * CELL;
       ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.moveTo(a.x, GY - 8); ctx.lineTo(a.x, landY); ctx.stroke(); ctx.globalAlpha = 1; ctx.setLineDash([]);
-      ctx.font = `12px ${HEAD}`; ctx.textAlign = 'center'; ctx.fillStyle = COLORS.accent; ctx.fillText('はなす！', Math.max(30, Math.min(W - 30, a.x)), 12);
+      ctx.font = this.f(12); ctx.textAlign = 'center'; ctx.fillStyle = COLORS.accent; ctx.fillText('はなす！', Math.max(30, Math.min(W - 30, a.x)), 12);
       ctx.beginPath(); ctx.moveTo(a.x - 6, GY - 14); ctx.lineTo(a.x + 6, GY - 14); ctx.lineTo(a.x, GY - 4); ctx.fill();
       if (!full) {
         const lr = this.topEmpty(col); ctx.strokeStyle = TONE[this.current].base; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
         rr(ctx, col * CELL + 4, GY + lr * CELL + 4, BLOCK, BLOCK, 8); ctx.stroke(); ctx.setLineDash([]);
-      } else { ctx.fillStyle = COLORS.fuse; ctx.font = `13px ${HEAD}`; ctx.fillText('×', col * CELL + CELL / 2, GY + 20); }
+      } else { ctx.fillStyle = COLORS.fuse; ctx.font = this.f(13); ctx.fillText('×', col * CELL + CELL / 2, GY + 20); }
     } else {
       const c = this.colOf(a.x), r = Math.floor((a.y - GY) / CELL);
       ctx.fillStyle = 'rgba(255,225,77,0.10)'; ctx.fillRect(c * CELL, GY, CELL, BOARD_H); if (r >= 0 && r < ROWS) ctx.fillRect(0, GY + r * CELL, W, CELL);
       const hitsGummy = r >= 0 && r < ROWS && !!this.grid[r][c];
       ctx.strokeStyle = hitsGummy ? COLORS.fuse : 'rgba(255,255,255,0.7)'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(a.x, a.y, 10, 0, 7); ctx.stroke();
-      if (!hitsGummy) { ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = `11px ${HEAD}`; ctx.textAlign = 'left'; ctx.fillText('↓ おちる', Math.min(W - 52, a.x + 14), a.y + 4); }
+      if (!hitsGummy) { ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = this.f(11); ctx.textAlign = 'left'; ctx.fillText('↓ おちる', Math.min(W - 52, a.x + 14), a.y + 4); }
       ctx.beginPath(); ctx.moveTo(a.x - 16, a.y); ctx.lineTo(a.x - 6, a.y); ctx.moveTo(a.x + 6, a.y); ctx.lineTo(a.x + 16, a.y);
       ctx.moveTo(a.x, a.y - 16); ctx.lineTo(a.x, a.y - 6); ctx.moveTo(a.x, a.y + 6); ctx.lineTo(a.x, a.y + 16); ctx.stroke();
       // one power bar with the gold band inside
@@ -580,10 +589,10 @@ export class SlingEngine {
       ctx.fillStyle = inCore ? '#FFF6B0' : 'rgba(255,225,77,0.95)'; rr(ctx, bx + 200 * this.coreLo, by - 3, 200 * this.coreW, bh + 6, 4); ctx.fill();
       if (inCore) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
       ctx.fillStyle = '#fff'; ctx.fillRect(bx + 200 * pw - 2, by - 5, 4, bh + 10);
-      ctx.fillStyle = COLORS.text; ctx.font = `12px ${HEAD}`; ctx.textAlign = 'right'; ctx.fillText('いきおい', W / 2 - 106, PAD_Y + 17);
+      ctx.fillStyle = COLORS.text; ctx.font = this.f(12); ctx.textAlign = 'right'; ctx.fillText('いきおい', W / 2 - 106, PAD_Y + 17);
     }
     if (!this.isArmed()) {
-      ctx.fillStyle = COLORS.accent; ctx.font = `13px ${HEAD}`; ctx.textAlign = 'center';
+      ctx.fillStyle = COLORS.accent; ctx.font = this.f(13); ctx.textAlign = 'center';
       ctx.fillText(this.holding === 'gummy' ? 'すこし したに ひいてから はなす' : 'うえに もどして はなすと やめる', W / 2, PAD_Y + 96);
     }
   }
@@ -675,7 +684,7 @@ export class SlingEngine {
     }
     if (this.bombGotFor && now >= this.bombGotAt && now - this.bombGotAt < 1400) {
       const k = (now - this.bombGotAt) / 1400, text = `${this.names[this.bombGotFor]}、ばくだん ゲット！`;
-      ctx.save(); ctx.globalAlpha = 1 - Math.max(0, k - 0.6) / 0.4; ctx.fillStyle = COLORS.accent; ctx.font = `18px ${HEAD}`; ctx.textAlign = 'center';
+      ctx.save(); ctx.globalAlpha = 1 - Math.max(0, k - 0.6) / 0.4; ctx.fillStyle = COLORS.accent; ctx.font = this.f(18); ctx.textAlign = 'center';
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(43,27,61,0.95)'; ctx.strokeText(text, W / 2, GY + 80 - k * 8); ctx.fillText(text, W / 2, GY + 80 - k * 8); ctx.restore();
     }
     const fl = this.flash;
@@ -759,7 +768,7 @@ export class SlingEngine {
     ctx.save(); ctx.globalAlpha = a * 0.9;
     ctx.fillStyle = press ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.3)'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(x, y, press ? 13 : 16, 0, 7); ctx.fill(); ctx.stroke();
-    if (t >= 0.62 && t < 0.8) { ctx.font = `13px ${HEAD}`; ctx.textAlign = 'center'; ctx.fillStyle = COLORS.accent; ctx.fillText('はなす！', x, y - 22); }
+    if (t >= 0.62 && t < 0.8) { ctx.font = this.f(13); ctx.textAlign = 'center'; ctx.fillStyle = COLORS.accent; ctx.fillText('はなす！', x, y - 22); }
     ctx.restore();
   }
 }

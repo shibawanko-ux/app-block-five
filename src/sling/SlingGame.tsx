@@ -26,9 +26,16 @@ export function PlayerChip({ player, size }: { player: SPlayer; size: number }) 
   );
 }
 
-function BombBall() {
+// Board width in CSS px: as wide as the screen allows, up to 560. The space left for the band and the bottom
+// bar/result card grows with the board (≈60 + 200·k px), which gives the 0.49 factor on the height.
+function boardWidth() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  return Math.max(200, Math.floor(Math.min(560, vw - 32, (vh - 60) * 0.49)));
+}
+
+function BombBall({ size = 26 }: { size?: number }) {
   return (
-    <span style={{ position: 'relative', width: 26, height: 26, display: 'inline-block' }}>
+    <span style={{ position: 'relative', width: size, height: size, display: 'inline-block' }}>
       <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: `radial-gradient(circle at 35% 30%, #5a5a5a, ${THEME.bomb} 60%, #111)` }} />
       <span style={{ position: 'absolute', right: '4%', top: '-14%', width: '34%', height: '34%', borderTop: `2.5px solid ${THEME.fuse}`, borderRight: `2.5px solid ${THEME.fuse}`, borderRadius: '0 60% 0 0' }} />
     </span>
@@ -42,6 +49,7 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
   const [ui, setUi] = useState<SlingUi | null>(null);
   const [againReady, setAgainReady] = useState(false);
   const [askQuit, setAskQuit] = useState(false);   // first tap on ✕ asks, second tap leaves
+  const [boardW, setBoardW] = useState(() => boardWidth());
 
   useEffect(() => {
     const eng = new SlingEngine(cvRef.current!, fxRef.current!, setUi, { cpu });
@@ -50,6 +58,15 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
     if (new URLSearchParams(location.search).has('debug')) dbg.__sling = eng;
     return () => { eng.destroy(); engRef.current = null; delete dbg.__sling; };
   }, [cpu]);
+
+  // The board grows with the screen up to 560px (cells 24–56px, DESIGN.md §8); the band and bars scale with it
+  useEffect(() => {
+    const onResize = () => setBoardW(boardWidth());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => { window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); };
+  }, []);
+  useEffect(() => { engRef.current?.setDisplayWidth(boardW); }, [boardW, cpu]);
 
   // the "もういっかい" button can't be hit for 1s, so a tap meant for the board doesn't restart instantly
   const gameOver = !!ui?.gameOver;
@@ -60,7 +77,7 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
   }, [gameOver]);
 
   const names: Record<SPlayer, string> = { p1: NAME.p1, p2: cpu ? 'CPU' : NAME.p2 };
-  const width = `min(${W}px, calc(100vw - 32px), calc((100dvh - 214px) * ${W} / ${H}))`;
+  const width = boardW, k = boardW / W, sz = (px: number, min = 0) => Math.max(min, Math.round(px * k));
   const markP: SPlayer | null = ui ? (ui.isDraw ? null : ui.winner || ui.current) : null;
   const tone = markP ? TONE[markP].base : '#FFFFFF';
   const bandText = !ui ? '' : ui.isDraw ? 'ひきわけ！' : ui.winner ? `${names[ui.winner]}の かち！` : `${names[ui.current]}の ばん`;
@@ -76,33 +93,33 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
     : have === 0 ? `ばくだんまで あと${BOMB_EVERY - ui.charge[ui.current]}かい` : 'ばくだんボタンを おすと つかえるよ！';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 40, overflowY: 'auto', minHeight: '100dvh', background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`, color: THEME.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'safe center', gap: 10, padding: 16, fontFamily: FONTS.body }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 40, overflowY: 'auto', minHeight: '100dvh', background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`, color: THEME.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'safe center', gap: 10, padding: '16px 16px max(16px, env(safe-area-inset-bottom))', fontFamily: FONTS.body }}>
       {/* Turn band — always the same height; the 34px slot on the right stays empty when playing on one device */}
       <div style={{
-        width, minHeight: 54, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 16,
+        width, minHeight: sz(54, 54), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '6px 10px 6px 14px', borderRadius: 16,
         background: ui?.isDraw ? 'rgba(255,255,255,0.08)' : `linear-gradient(90deg, ${hexA(tone, 0.35)}, ${hexA(tone, 0.08)})`,
         boxShadow: ui?.isDraw ? 'inset 0 0 0 2px rgba(255,255,255,0.3)' : `inset 0 0 0 2px ${hexA(tone, 0.6)}`,
         transition: 'background 0.25s ease-out, box-shadow 0.25s ease-out',
       }}>
-        {markP && <PlayerChip player={markP} size={22} />}
-        <span style={{ fontFamily: FONTS.heading, fontSize: 15 }}>{bandText}</span>
+        {markP && <PlayerChip player={markP} size={sz(22, 22)} />}
+        <span style={{ fontFamily: FONTS.heading, fontSize: sz(15, 15) }}>{bandText}</span>
         <button
           onClick={() => { if (askQuit) onMenu(); else { setAskQuit(true); setTimeout(() => setAskQuit(false), 3000); } }}
           aria-label="やめて メニューへ"
           style={{
-            marginLeft: 'auto', minWidth: 34, height: 34, flexShrink: 0, borderRadius: 999, border: 0, cursor: 'pointer', padding: askQuit ? '0 12px' : 0,
+            marginLeft: 'auto', minWidth: sz(40, 44), height: sz(40, 44), flexShrink: 0, borderRadius: 999, border: 0, cursor: 'pointer', padding: askQuit ? '0 12px' : 0,
             background: askQuit ? THEME.accent : 'rgba(255,255,255,0.10)', color: askQuit ? THEME.bgTop : THEME.muted,
-            fontFamily: FONTS.heading, fontSize: askQuit ? 12 : 15,
+            fontFamily: FONTS.heading, fontSize: askQuit ? sz(13, 13) : sz(16, 16),
           }}
         >{askQuit ? 'やめる？' : '✕'}</button>
-        {ui?.endNote && <span style={{ flexBasis: '100%', marginLeft: 32, fontSize: 13, fontWeight: 800, color: THEME.accent }}>{ui.endNote}</span>}
+        {ui?.endNote && <span style={{ flexBasis: '100%', marginLeft: 32, fontSize: sz(13, 13), fontWeight: 800, color: THEME.accent }}>{ui.endNote}</span>}
       </div>
 
       <canvas ref={cvRef} style={{ display: 'block', width, height: 'auto', aspectRatio: `${W} / ${H}`, borderRadius: 14, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }} aria-label="びん と はっしゃだい。したの グミを ひっぱって なげる" role="img" />
 
       {/* Bottom bar while playing, result card once the game is decided (same place) */}
       {ui && !ui.gameOver && (
-        <div style={{ width, height: 52, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width, height: sz(56, 56), display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <button
               onClick={() => engRef.current?.toggleBomb()}
@@ -110,41 +127,41 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
               aria-label={holdingBomb ? 'グミに もどす' : 'ばくだんに もちかえる'}
               className={ready ? 'bomb-ready' : undefined}
               style={{
-                position: 'relative', width: 52, height: 52, borderRadius: 16, flexShrink: 0, padding: 0, display: 'grid', placeItems: 'center',
+                position: 'relative', width: sz(52, 48), height: sz(52, 48), borderRadius: 16, flexShrink: 0, padding: 0, display: 'grid', placeItems: 'center',
                 border: `2px solid ${holdingBomb ? THEME.fuse : THEME.glass}`,
                 background: holdingBomb ? 'rgba(255,59,92,0.18)' : 'rgba(255,255,255,0.06)',
                 boxShadow: holdingBomb ? '0 0 14px rgba(255,59,92,0.6)' : 'none',
                 opacity: btnDisabled && !holdingBomb ? 0.35 : 1, cursor: btnDisabled ? 'not-allowed' : 'pointer',
               }}
             >
-              <BombBall />
-              <span style={{ position: 'absolute', bottom: -6, right: -6, padding: '2px 6px', borderRadius: 999, background: have > 0 ? '#D9244A' : '#5A4A6E', color: '#fff', fontSize: 11, fontWeight: 900 }}>×{have}</span>
+              <BombBall size={sz(26, 24)} />
+              <span style={{ position: 'absolute', bottom: -6, right: -6, padding: '2px 6px', borderRadius: 999, background: have > 0 ? '#D9244A' : '#5A4A6E', color: '#fff', fontSize: sz(11, 11), fontWeight: 900 }}>×{have}</span>
             </button>
             <div style={{ display: 'flex', gap: 4, marginTop: 4 }} aria-label={`ばくだんまで ${ui.charge[ui.current]}/${BOMB_EVERY}`}>
               {Array.from({ length: BOMB_EVERY }, (_, i) => (
-                <i key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: ui.bombUsed[ui.current] ? 'rgba(255,255,255,0.08)' : i < ui.charge[ui.current] ? THEME.accent : 'rgba(255,255,255,0.2)' }} />
+                <i key={i} style={{ width: sz(6, 6), height: sz(6, 6), borderRadius: '50%', background: ui.bombUsed[ui.current] ? 'rgba(255,255,255,0.08)' : i < ui.charge[ui.current] ? THEME.accent : 'rgba(255,255,255,0.2)' }} />
               ))}
             </div>
           </div>
-          <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: THEME.muted, lineHeight: 1.4, lineBreak: 'strict', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{hint}</span>
-          <span style={{ fontSize: 12, color: THEME.muted, whiteSpace: 'nowrap' }}>あいて ×{ui.bombs[other(ui.current)]}</span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: sz(13, 13), color: THEME.muted, lineHeight: 1.4, lineBreak: 'strict', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{hint}</span>
+          <span style={{ fontSize: sz(12, 12), color: THEME.muted, whiteSpace: 'nowrap' }}>あいて ×{ui.bombs[other(ui.current)]}</span>
         </div>
       )}
       {ui?.gameOver && (
         <div className="result-rise" style={{ width, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 16, background: 'rgba(255,255,255,0.08)', boxShadow: `inset 0 0 0 2px ${THEME.glass}` }}>
-          {ui.winner && <PlayerChip player={ui.winner} size={28} />}
-          <div style={{ flex: '1 1 120px', minWidth: 0 }}>
-            <div style={{ fontFamily: FONTS.heading, fontSize: 16, whiteSpace: 'nowrap' }}>{ui.winner ? `${names[ui.winner]}の かち！` : 'ひきわけ！'}</div>
-            <div style={{ fontSize: 13, color: THEME.muted, fontWeight: 800, marginTop: 2, whiteSpace: 'nowrap' }}>
-              ソーダ <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: 16 }}>{ui.wins.p1}</b> − <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: 16 }}>{ui.wins.p2}</b> {names.p2}
+          {ui.winner && <PlayerChip player={ui.winner} size={sz(28, 26)} />}
+          <div style={{ flex: '1 1 auto', minWidth: 'max-content' }}>
+            <div style={{ fontFamily: FONTS.heading, fontSize: sz(16, 15), whiteSpace: 'nowrap' }}>{ui.winner ? `${names[ui.winner]}の かち！` : 'ひきわけ！'}</div>
+            <div style={{ fontSize: sz(13, 12), color: THEME.muted, fontWeight: 800, marginTop: 2, whiteSpace: 'nowrap' }}>
+              ソーダ <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: sz(16, 15) }}>{ui.wins.p1}</b> − <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: sz(16, 15) }}>{ui.wins.p2}</b> {names.p2}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
             <button id="againBtn" disabled={!againReady} onClick={() => { setAgainReady(false); engRef.current?.newGame(); }} style={{
-              fontFamily: FONTS.heading, fontSize: 14, border: 0, borderRadius: 14, padding: '10px 14px', background: THEME.accent, color: THEME.bgTop,
+              fontFamily: FONTS.heading, fontSize: sz(14, 14), border: 0, borderRadius: 14, minHeight: 44, padding: '0 14px', background: THEME.accent, color: THEME.bgTop,
               boxShadow: 'inset 0 -3px 0 rgba(0,0,0,0.18)', opacity: againReady ? 1 : 0.4, cursor: againReady ? 'pointer' : 'default',
             }}>もういっかい</button>
-            <button onClick={onMenu} style={{ fontFamily: FONTS.heading, fontSize: 12, border: 0, borderRadius: 12, padding: '6px 10px', background: 'transparent', color: THEME.muted, boxShadow: `inset 0 0 0 2px ${THEME.glass}`, cursor: 'pointer' }}>メニュー</button>
+            <button onClick={onMenu} style={{ fontFamily: FONTS.heading, fontSize: sz(12, 12), border: 0, borderRadius: 12, minHeight: 44, padding: '0 12px', background: 'transparent', color: THEME.muted, boxShadow: `inset 0 0 0 2px ${THEME.glass}`, cursor: 'pointer' }}>メニュー</button>
           </div>
         </div>
       )}
