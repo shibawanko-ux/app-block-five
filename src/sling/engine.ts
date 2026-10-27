@@ -9,7 +9,7 @@ import {
 } from './rules';
 import { TONE, bombShape, easeIn, easeOut, gummy, rr } from './draw';
 import { getCpuMove } from '../cpuPlayer';
-import { sound, stretch, stretchStop, unlock } from './sound';
+import { sound, stretchStop, unlock } from './sound';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
 
@@ -493,9 +493,8 @@ export class SlingEngine {
     }
     if (this.state === 'stuck' && this.fuse && s?.kind === 'bomb' && now - this.fuse.at > FUSE_MS) this.explode(s);
     if (this.state === 'exploding' && this.explosion && this.explosion.frame > 24) { this.afterExplosion(); this.explosion = null; }
-    // rubber band tone while pulling (the person or the CPU); 「きらん」 when the bomb's power enters the gold band
+    // 「きらん」 when the bomb's power enters the gold band (no sound while pulling — dropped 2026-10-27)
     if (this.state === 'drawing') {
-      stretch(this.pullVec().len / MAX_PULL);
       const inCore = this.holding === 'bomb' && this.isCore(this.chargePower(now));
       if (inCore && !this.wasInCore) sound.kiran();
       this.wasInCore = inCore;
