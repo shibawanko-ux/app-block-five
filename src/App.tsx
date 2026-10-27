@@ -5,6 +5,8 @@ import { CELL as BASE_CELL, DEFAULT_CONFIG, PREVIEW_ROWS, colsForPlayerCount } f
 import { checkWin, createBoard, isDraw } from './gameLogic';
 import { getCpuMove } from './cpuPlayer';
 import SlingGame from './sling/SlingGame';
+import MuteButton from './sling/MuteButton';
+import SoundTest from './sling/SoundTest';
 import { starPath, starPoints } from './sling/draw';
 import { COLORS as THEME, FONTS } from './theme';
 import {
@@ -2044,6 +2046,13 @@ export default function App() {
       })()}
 
       {slingOn && <SlingGame key={slingOn} cpu={slingOn === 'cpu'} onMenu={() => setSlingOn(false)} />}
+
+      {new URLSearchParams(location.search).has('sounds') && <SoundTest />}
+
+      {/* Sound on/off — same top-right spot on the menu (DESIGN.md §4) */}
+      {!slingOn && (ui.status === 'idle' || ui.status === 'waiting') && (
+        <div style={{ position: 'fixed', top: 12, right: 12, zIndex: 35 }}><MuteButton /></div>
+      )}
 
       {/* Phones on their side (height < 500): the game is pulled downwards, so ask to turn it upright (CSS-only, index.css) */}
       <div className="rotate-hint" role="alert">

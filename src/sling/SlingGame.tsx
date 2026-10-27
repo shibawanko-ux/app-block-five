@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { COLORS as THEME, FONTS } from '../theme';
 import { H, SlingEngine, W, type SlingUi } from './engine';
 import { starPath } from './draw';
+import MuteButton from './MuteButton';
+import { unlock } from './sound';
 import { BOMB_EVERY, NAME, other, type SPlayer } from './rules';
 
 
@@ -93,21 +95,22 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
     : have === 0 ? `ばくだんまで あと${BOMB_EVERY - ui.charge[ui.current]}かい` : 'ばくだんボタンを おすと つかえるよ！';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 40, overflowY: 'auto', minHeight: '100dvh', background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`, color: THEME.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'safe center', gap: 10, padding: '16px 16px max(16px, env(safe-area-inset-bottom))', fontFamily: FONTS.body }}>
+    <div onPointerDown={unlock} onPointerUp={unlock} style={{ position: 'fixed', inset: 0, zIndex: 40, overflowY: 'auto', minHeight: '100dvh', background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`, color: THEME.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'safe center', gap: 10, padding: '16px 16px max(16px, env(safe-area-inset-bottom))', fontFamily: FONTS.body }}>
       {/* Turn band — always the same height; the 34px slot on the right stays empty when playing on one device */}
       <div style={{
-        width, minHeight: sz(54, 54), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '6px 10px 6px 14px', borderRadius: 16,
+        width, minHeight: sz(54, 54), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '6px 10px 6px 14px', borderRadius: 16,
         background: ui?.isDraw ? 'rgba(255,255,255,0.08)' : `linear-gradient(90deg, ${hexA(tone, 0.35)}, ${hexA(tone, 0.08)})`,
         boxShadow: ui?.isDraw ? 'inset 0 0 0 2px rgba(255,255,255,0.3)' : `inset 0 0 0 2px ${hexA(tone, 0.6)}`,
         transition: 'background 0.25s ease-out, box-shadow 0.25s ease-out',
       }}>
         {markP && <PlayerChip player={markP} size={sz(22, 22)} />}
-        <span style={{ fontFamily: FONTS.heading, fontSize: sz(15, 15) }}>{bandText}</span>
+        <span style={{ fontFamily: FONTS.heading, fontSize: sz(15, 15), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '0 1 auto' }}>{bandText}</span>
+        <span style={{ marginLeft: 'auto', display: 'flex' }}><MuteButton size={sz(40, 44)} /></span>
         <button
           onClick={() => { if (askQuit) onMenu(); else { setAskQuit(true); setTimeout(() => setAskQuit(false), 3000); } }}
           aria-label="やめて メニューへ"
           style={{
-            marginLeft: 'auto', minWidth: sz(40, 44), height: sz(40, 44), flexShrink: 0, borderRadius: 999, border: 0, cursor: 'pointer', padding: askQuit ? '0 12px' : 0,
+            minWidth: sz(40, 44), height: sz(40, 44), flexShrink: 0, borderRadius: 999, border: 0, cursor: 'pointer', padding: askQuit ? '0 12px' : 0,
             background: askQuit ? THEME.accent : 'rgba(255,255,255,0.10)', color: askQuit ? THEME.bgTop : THEME.muted,
             fontFamily: FONTS.heading, fontSize: askQuit ? sz(13, 13) : sz(16, 16),
           }}

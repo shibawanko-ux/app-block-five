@@ -9,6 +9,7 @@ import {
 } from './rules';
 import { TONE, bombShape, easeIn, easeOut, gummy, rr } from './draw';
 import { getCpuMove } from '../cpuPlayer';
+import { sound, stretch, stretchStop, unlock } from './sound';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
 
@@ -96,7 +97,8 @@ export class SlingEngine {
   private shards: Shard[] = [];
   private bombGotFor: SPlayer | null = null; private bombGotAt = 0;
   private padHintAt = -Infinity;
-  private cpuNudgeAt = -Infinity;   // the person tried to pull during the CPU's turn
+  private cpuNudgeAt = -Infinity;
+  private wasInCore = false;   // the person tried to pull during the CPU's turn
   private seen: Record<Holding, boolean> = { gummy: false, bomb: false };
 
   private cpu: boolean;
@@ -118,6 +120,7 @@ export class SlingEngine {
   }
 
   destroy() {
+    stretchStop();
     cancelAnimationFrame(this.raf);
     this.cleanups.forEach(f => f());
     Events.off(this.engine, 'collisionStart', this.onCollision);
@@ -213,14 +216,15 @@ export class SlingEngine {
   }
   private attachInput() {
     const cv = this.cv, mine = (e: PointerEvent) => e.pointerId === this.pointerId;
-    const cancel = () => { if (this.state === 'drawing' && !this.cpuPlan) { this.state = 'idle'; this.sync(); } };
+    const cancel = () => { stretchStop(); if (this.state === 'drawing' && !this.cpuPlan) { this.state = 'idle'; this.sync(); } };
     const on = <K extends keyof HTMLElementEventMap>(t: EventTarget, type: K | string, fn: (e: never) => void) => {
       t.addEventListener(type, fn as EventListener); this.cleanups.push(() => t.removeEventListener(type, fn as EventListener));
     };
     on(cv, 'pointerdown', (e: PointerEvent) => {
       if (this.gameOver || e.button !== 0) return;   // the result card starts the next game
       const p = this.local(e);
-      if (this.isCpuTurn()) { if (p.y >= PAD_Y - 10) this.cpuNudgeAt = performance.now(); return; }
+      unlock();   // browsers only allow sound after a touch
+      if (this.isCpuTurn()) { if (p.y >= PAD_Y - 10) { this.cpuNudgeAt = performance.now(); sound.buzz(); } return; }
       if (this.state !== 'idle') return;
       if (p.y < PAD_Y - 10) { this.padHintAt = performance.now(); return; }   // tapped the jar: point at the launcher
       e.preventDefault();
@@ -232,7 +236,8 @@ export class SlingEngine {
       this.sync();
     });
     on(cv, 'pointermove', (e: PointerEvent) => { if (this.state === 'drawing' && mine(e)) this.pointer = this.local(e); });
-    on(cv, 'pointerup', (e: PointerEvent) => { if (this.state === 'drawing' && mine(e)) this.release(); });
+    // touch counts as a user gesture on pointerup (not always on pointerdown), so unlock here too
+    on(cv, 'pointerup', (e: PointerEvent) => { unlock(); if (this.state === 'drawing' && mine(e)) this.release(); });
     on(cv, 'pointercancel', (e: PointerEvent) => { if (mine(e)) cancel(); });
     on(cv, 'lostpointercapture', (e: PointerEvent) => { if (mine(e)) cancel(); });
     // a touch long-press (holding a bomb for the gold band) can fire contextmenu: swallow it, only a mouse right-click cancels
@@ -262,6 +267,7 @@ export class SlingEngine {
       };
       this.bombs[this.current] = 0; this.bombUsed[this.current] = true;   // used up the moment it is thrown, hit or miss — and no more this game
     }
+    sound.pop(Math.min(1, this.pullVec().len / MAX_PULL));
     this.state = 'flying';
     this.sync();
   }
@@ -295,11 +301,15 @@ export class SlingEngine {
       this.slip = { from: s.col, fromRow: aimRow, to: col, row, at: performance.now() };
       const n = Math.abs(col - s.col);
       this.flashText(n === 1 ? 'おっと！ となりへ' : `おっと！ ${n}れつ ずれた`, col * CELL + CELL / 2, GY + row * CELL - 6);
-    }
+      sound.squish(n);
+    } else sound.boing();
     this.rebuildStatics();
     if (this.bombs[s.player] === 0 && !this.bombUsed[s.player]) {
       this.charge[s.player] = Math.min(BOMB_EVERY, this.charge[s.player] + 1);
-      if (this.charge[s.player] === BOMB_EVERY) { this.bombs[s.player] = 1; this.bombGotFor = s.player; this.bombGotAt = performance.now() + (this.flash ? 900 : 0); }
+      if (this.charge[s.player] === BOMB_EVERY) {
+        this.bombs[s.player] = 1; this.bombGotFor = s.player; this.bombGotAt = performance.now() + (this.flash ? 900 : 0);
+        sound.coin(Math.max(0, this.bombGotAt - performance.now()) / 1000);   // scheduled by Web Audio, with the 「ばくだん ゲット！」 text
+      }
     }
     this.endTurn();
   }
@@ -365,6 +375,7 @@ export class SlingEngine {
     const cells = blastCells(level, c, r).map(([rr, cc]) => ({ rr, cc, p: this.grid[rr][cc] }));
     const hitCount = cells.filter(x => x.p).length;
     this.explosion = { c, r, level, frame: 0, hitCount, cells };
+    sound.boom(hitCount ? level : 1);
     if (!RM) cells.forEach(({ rr, cc, p }) => { if (p) this.burst(cc * CELL + CELL / 2, GY + rr * CELL + CELL / 2, p, (Math.abs(rr - r) + Math.abs(cc - c)) * 42, level); });
     cells.forEach(({ rr, cc }) => { this.grid[rr][cc] = null; });
     this.flashText(hitCount ? (s.core ? 'コア！' : '') + LEVEL_NAME[level] : 'はずれ！', c * CELL + CELL / 2, Math.max(GY + 18, GY + r * CELL - 8));
@@ -391,10 +402,10 @@ export class SlingEngine {
     const res = judge(this.grid, thrower);
     if (res.winner) { this.winner = res.winner; this.winCells = res.cells; this.endNote = res.note; }
     else if (res.draw) this.isDraw = true;
-    else { this.current = other(thrower); this.winCells = null; }
+    else { this.current = other(thrower); this.winCells = null; sound.pico(0.25); }
     if (this.winner || this.isDraw) {
       this.gameOver = true; this.holding = 'gummy';
-      if (this.winner) this.wins[this.winner]++;
+      if (this.winner) { this.wins[this.winner]++; sound.win(); }
       this.nextStarter = this.isDraw ? other(this.nextStarter) : other(this.winner!);   // loser starts next
     }
     this.sync();
@@ -482,6 +493,13 @@ export class SlingEngine {
     }
     if (this.state === 'stuck' && this.fuse && s?.kind === 'bomb' && now - this.fuse.at > FUSE_MS) this.explode(s);
     if (this.state === 'exploding' && this.explosion && this.explosion.frame > 24) { this.afterExplosion(); this.explosion = null; }
+    // rubber band tone while pulling (the person or the CPU); 「きらん」 when the bomb's power enters the gold band
+    if (this.state === 'drawing') {
+      stretch(this.pullVec().len / MAX_PULL);
+      const inCore = this.holding === 'bomb' && this.isCore(this.chargePower(now));
+      if (inCore && !this.wasInCore) sound.kiran();
+      this.wasInCore = inCore;
+    } else { stretchStop(); this.wasInCore = false; }
     this.draw(now);
     this.drawOverlay(now);
   };
