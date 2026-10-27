@@ -8,6 +8,7 @@ import SlingGame from './sling/SlingGame';
 import MuteButton from './sling/MuteButton';
 import SoundTest from './sling/SoundTest';
 import { starPath, starPoints } from './sling/draw';
+import { setMusic } from './sling/sound';
 import { COLORS as THEME, FONTS } from './theme';
 import {
   createRoom, joinRoom, emitDrop, emitSettle, emitBomb, emitStart, emitSkip,
@@ -626,6 +627,10 @@ export default function App() {
   const [ui, setUi] = useState<UIState>(INIT_UI);
   // "ふたりで" now plays the pull-everything game (docs/requirements/2026-10-26_引っぱる操作の本体移行.md)
   const [slingOn, setSlingOn] = useState<false | '2player' | 'cpu'>(false);
+  // BGM: the menu tune on menus, the play tune while a game is on screen (starts after the first touch)
+  useEffect(() => {
+    setMusic(slingOn || ui.status === 'playing' || ui.status === 'won' || ui.status === 'draw' ? 'play' : 'menu');
+  }, [slingOn, ui.status]);
   const gameIdRef = useRef(0);   // bumps on start/quit so stale CPU timers don't move in a new game
   const [askQuit, setAskQuit] = useState(false);
 
@@ -1776,6 +1781,10 @@ export default function App() {
                   <div style={{ position: 'absolute', top: 2, left: showGrid ? 17 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
                 </div>
               </div>
+              {/* BGM credit required by the 魔王魂 terms (https://maou.audio/rule/) */}
+              <a href="https://maou.audio/" target="_blank" rel="noopener noreferrer" style={{ color: THEME.muted, fontSize: 12, padding: '4px 16px', textDecoration: 'underline' }}>
+                音楽：魔王魂
+              </a>
             </>)}
 
             {/* ── Online sub-menu ── */}

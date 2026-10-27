@@ -31,16 +31,19 @@ export function unlock() {
       const b = ac.createBufferSource(); b.buffer = ac.createBuffer(1, 1, 22050); b.connect(ac.destination); b.start(0);
     }
     // 'suspended', or iOS's own 'interrupted' after a call / coming back from the background
-    if (ac.state !== 'running') ac.resume().catch(() => { /* needs another touch */ });
+    if (ac.state !== 'running') ac.resume().then(refreshMusic).catch(() => { /* needs another touch */ });
+    else refreshMusic();
   } catch { /* no audio on this device */ }
 }
 
 // Leaving the page: stop the rubber band; coming back: wake audio again
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stretchStop();
-    else if (ac && ac.state !== 'running') ac.resume().catch(() => { /* needs a touch */ });
+    if (document.hidden) { stretchStop(); if (ac && ac.state === 'running') ac.suspend().catch(() => { /* ignore */ }); }   // music pauses too
+    else if (ac) ac.resume().then(refreshMusic).catch(() => { /* needs a touch */ });   // always: a suspend may still be in progress
   });
+  // any first touch / key anywhere on the page lets the sound start (browser rule)
+  for (const ev of ['pointerdown', 'pointerup', 'keydown'] as const) document.addEventListener(ev, unlock, { passive: true });
   window.addEventListener('blur', () => stretchStop());
 }
 
@@ -120,3 +123,66 @@ export const sound = {
   // CPUの番に触った「ぶぶっ」
   buzz() { tone(140, 120, 0.08, 0.2, 'square'); tone(140, 120, 0.08, 0.2, 'square', 0.11); },
 };
+
+// ── Music (BGM): looping tracks from 魔王魂 (https://maou.audio/), credited on the menu — docs/requirements/2026-10-27_BGM.md
+export type Track = 'menu' | 'play';
+const TRACKS: Record<Track, { file: string; vol: number }> = {
+  menu: { file: 'bgm/maou_loop_bgm_8bit29.m4a', vol: 0.32 },   // 8bit29
+  play: { file: 'bgm/maou_loop_bgm_piano25.m4a', vol: 0.2 },   // ピアノ25 — under the sound effects
+};
+const FADE = 0.5;
+let wanted: Track | null = null;
+let playing: { track: Track; src: AudioBufferSourceNode; g: GainNode } | null = null;
+const buffers = new Map<Track, Promise<AudioBuffer>>();
+const failedAt = new Map<Track, number>();   // don't retry a failed download on every touch
+
+function load(t: Track, c: AudioContext) {
+  let p = buffers.get(t);
+  if (!p) {
+    if (Date.now() - (failedAt.get(t) ?? 0) < 30000) return Promise.reject(new Error('recently failed'));
+    p = fetch(import.meta.env.BASE_URL + TRACKS[t].file)
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer(); })
+      // callback form as well, for older Safari whose decodeAudioData returns nothing
+      .then(b => new Promise<AudioBuffer>((res, rej) => { const r = c.decodeAudioData(b, res, rej); if (r && typeof r.then === 'function') r.then(res, rej); }));
+    p.catch(() => { buffers.delete(t); failedAt.set(t, Date.now()); });   // retry after 30s
+    buffers.set(t, p);
+  }
+  return p;
+}
+
+// AAC files carry a few ms of silence at both ends; loop between the first and last audible samples
+function audibleRange(b: AudioBuffer): [number, number] {
+  const d = b.getChannelData(0), th = 0.0015, max = Math.floor(b.sampleRate * 0.1);
+  let s = 0, e = d.length - 1;
+  while (s < max && Math.abs(d[s]) < th) s++;
+  while (d.length - 1 - e < max && Math.abs(d[e]) < th) e--;
+  return [s / b.sampleRate, (e + 1) / b.sampleRate];
+}
+
+export function setMusic(t: Track | null) { wanted = t; refreshMusic(); }
+
+function refreshMusic() {
+  const c = ac;
+  if (!c || !master || c.state !== 'running') return;   // starts after the first touch
+  if ((playing?.track ?? null) === wanted) return;
+  if (playing) {   // fade out the old track
+    const old = playing; playing = null;
+    try { old.g.gain.setTargetAtTime(0.0001, c.currentTime, FADE / 4); old.src.stop(c.currentTime + FADE + 0.1); } catch { /* already stopped */ }
+  }
+  const t = wanted;
+  if (!t) return;
+  load(t, c).then(buf => {
+    if (wanted !== t || (playing && playing.track === t) || !master) return;   // changed while loading
+    const src = c.createBufferSource(), g = c.createGain();
+    const [ls, le] = audibleRange(buf);
+    src.buffer = buf; src.loop = true; src.loopStart = ls; src.loopEnd = le;
+    g.gain.setValueAtTime(0.0001, c.currentTime); g.gain.setTargetAtTime(TRACKS[t].vol, c.currentTime, FADE / 4);
+    src.connect(g); g.connect(master); src.start(0, ls);
+    playing = { track: t, src, g };
+  }).catch(() => { /* music is optional: play on without it */ });
+}
+
+// automated tests (open with ?debug): which track is playing
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')) {
+  (window as unknown as { __music: () => unknown }).__music = () => ({ track: playing?.track ?? null, state: ac?.state ?? null, muted });
+}

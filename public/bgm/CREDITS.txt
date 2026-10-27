@@ -1,0 +1,5 @@
+BGM: 魔王魂 (Maou Damashii) https://maou.audio/
+- maou_loop_bgm_8bit29.m4a  : 8bit29（ゲーム向けループ音源） https://maou.audio/bgm_8bit29/
+- maou_loop_bgm_piano25.m4a : ピアノ25（ゲーム向けループ音源） https://maou.audio/bgm_piano25/
+利用規約: https://maou.audio/rule/
+These files are redistributed with credit and a link, as the terms require. They are not covered by this project's own license.

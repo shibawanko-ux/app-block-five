@@ -1,7 +1,7 @@
 // Page for listening to every sound one by one: open the app with ?sounds (not linked from the menu).
 import { COLORS as THEME, FONTS } from '../theme';
 import MuteButton from './MuteButton';
-import { sound, unlock } from './sound';
+import { setMusic, sound, unlock } from './sound';
 
 const LIST: { label: string; play: () => void }[] = [
   { label: '離す「ぽんっ」（弱）', play: () => sound.pop(0.2) },
@@ -17,6 +17,9 @@ const LIST: { label: string; play: () => void }[] = [
   { label: '5つそろう「ぽぽぽぽぽん」', play: () => sound.win() },
   { label: '手番交代「ぴこ」', play: () => sound.pico() },
   { label: 'CPUの番に触った「ぶぶっ」', play: () => sound.buzz() },
+  { label: '♪ メニューの曲（8bit29）', play: () => setMusic('menu') },
+  { label: '♪ 遊ぶ画面の曲（ピアノ25）', play: () => setMusic('play') },
+  { label: '♪ 曲を止める', play: () => setMusic(null) },
 ];
 
 export default function SoundTest() {
