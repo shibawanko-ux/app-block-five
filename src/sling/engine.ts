@@ -89,9 +89,8 @@ export class SlingEngine {
   private fuse: Fuse | null = null; private explosion: Explosion | null = null;
 
   // effects
-  private flash: { text: string; x: number; y: number; at: number } | null = null; private flashDur = 900;
+  private flash: { text: string; at: number } | null = null; private flashDur = 900;
   private slip: { from: number; fromRow: number; to: number; row: number; at: number } | null = null;
-  private hits: { text: string; x: number; y: number; at: number; lvl: number }[] = [];
   private ripple: { x: number; y: number; at: number } | null = null;
   private settleAnim: { at: number; from: Record<string, number> } | null = null;
   private shards: Shard[] = [];
@@ -133,8 +132,8 @@ export class SlingEngine {
     this.grid = emptyGrid();
     this.current = this.nextStarter; this.winner = null; this.isDraw = false; this.endNote = ''; this.gameOver = false;
     this.bombs = { p1: 0, p2: 0 }; this.charge = { p1: 0, p2: 0 }; this.bombUsed = { p1: false, p2: false }; this.holding = 'gummy'; this.winCells = null;
-    this.flash = null; this.slip = null; this.hits = []; this.bombGotFor = null; this.ripple = null; this.settleAnim = null; this.shards = [];
-    this.clearFlying(); this.rebuildStatics(); this.sync();
+    this.flash = null; this.slip = null; this.bombGotFor = null; this.ripple = null; this.settleAnim = null; this.shards = [];
+    this.rollCore(); this.clearFlying(); this.rebuildStatics(); this.sync();
   }
   // Called by the React layer with the board's on-screen width (CSS px)
   setDisplayWidth(cssW: number) {
@@ -182,6 +181,8 @@ export class SlingEngine {
 
   // ── Aiming ─────────────────────────────────────────────────────────
   private chargePower(now: number) { const p = ((now - this.drawStart) / 1000 / CHARGE_SEC) % 2; return p <= 1 ? p : 2 - p; }
+  // The gold band is drawn once per turn (not per pull), so pulling again can't fish for a wide band
+  private rollCore() { this.coreW = 0.04 + Math.random() * 0.06; this.coreLo = 0.3 + Math.random() * (0.9 - this.coreW - 0.3); }
   private isCore = (pw: number) => pw >= this.coreLo && pw <= this.coreLo + this.coreW;
   // Pull is measured from where the finger went down; x and y clamped separately
   private pullVec() {
@@ -231,8 +232,7 @@ export class SlingEngine {
       try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
       this.state = 'drawing'; this.pointer = p; this.grab = p; this.pointerId = e.pointerId; this.drawStart = performance.now();
       if (!this.seen[this.holding]) this.markSeen(this.holding);
-      this.slip = null; this.flash = null; this.hits = [];
-      this.coreW = 0.04 + Math.random() * 0.06; this.coreLo = 0.3 + Math.random() * (0.9 - this.coreW - 0.3);   // differs every throw
+      this.slip = null; this.flash = null;
       this.sync();
     });
     on(cv, 'pointermove', (e: PointerEvent) => { if (this.state === 'drawing' && mine(e)) this.pointer = this.local(e); });
@@ -300,7 +300,7 @@ export class SlingEngine {
     if (col !== s.col) {
       this.slip = { from: s.col, fromRow: aimRow, to: col, row, at: performance.now() };
       const n = Math.abs(col - s.col);
-      this.flashText(n === 1 ? 'おっと！ となりへ' : `おっと！ ${n}れつ ずれた`, col * CELL + CELL / 2, GY + row * CELL - 6);
+      this.flashText(n === 1 ? 'おっと！ となりへ' : `おっと！ ${n}れつ ずれた`);
       sound.squish(n);
     } else sound.boing();
     this.rebuildStatics();
@@ -319,7 +319,7 @@ export class SlingEngine {
     if (target.r < 0) { this.startRoll(cx, GY - CELL * 0.4, speed); return; }
     if (this.grid[target.r][target.c]) {
       const impact = speed * (0.75 + Math.random() * 0.3);
-      this.hitText(impact, cx, GY + target.r * CELL);
+      this.hitText(impact);
       this.fuse = { c: target.c, r: target.r, at: performance.now(), level: this.blastLevel(s, levelFromImpact(impact)) };
       this.state = 'stuck'; return;
     }
@@ -348,13 +348,12 @@ export class SlingEngine {
       // a bomb aimed at an empty cell sticks to the first gummy it touches (floor/walls only make it roll)
       if (hit.cell && !this.stickTo) this.stickTo = { ...hit.cell, impact: Math.min(Math.max(impact, this.maxImpact), this.impactCap) };
       const lv = levelFromImpact(Math.min(impact, this.impactCap));
-      if (impact > 1.5 && lv > this.shownLvl) { this.shownLvl = lv; this.hitText(Math.min(impact, this.impactCap), body.position.x, body.position.y - 14); }
+      if (impact > 1.5 && lv > this.shownLvl) { this.shownLvl = lv; this.hitText(Math.min(impact, this.impactCap)); }
       this.maxImpact = Math.max(this.maxImpact, impact);
     }
   };
-  private hitText(impact: number, x: number, y: number) {
-    const lvl = levelFromImpact(impact);
-    this.hits.push({ text: LEVEL_NAME[lvl], x: Math.max(30, Math.min(W - 30, x)), y, at: performance.now(), lvl });
+  private hitText(impact: number) {
+    this.flashText(LEVEL_NAME[levelFromImpact(impact)]);
   }
   private bombSettle(s: BombShot, now: number) {
     const { x, y } = this.body!.position;
@@ -378,7 +377,7 @@ export class SlingEngine {
     sound.boom(hitCount ? level : 1);
     if (!RM) cells.forEach(({ rr, cc, p }) => { if (p) this.burst(cc * CELL + CELL / 2, GY + rr * CELL + CELL / 2, p, (Math.abs(rr - r) + Math.abs(cc - c)) * 42, level); });
     cells.forEach(({ rr, cc }) => { this.grid[rr][cc] = null; });
-    this.flashText(hitCount ? (s.core ? 'コア！' : '') + LEVEL_NAME[level] : 'はずれ！', c * CELL + CELL / 2, Math.max(GY + 18, GY + r * CELL - 8));
+    this.flashText(hitCount ? (s.core ? 'コア！' : '') + LEVEL_NAME[level] : 'はずれ！');
     this.fuse = null; this.state = 'exploding';
   }
   private afterExplosion() {
@@ -402,7 +401,7 @@ export class SlingEngine {
     const res = judge(this.grid, thrower);
     if (res.winner) { this.winner = res.winner; this.winCells = res.cells; this.endNote = res.note; }
     else if (res.draw) this.isDraw = true;
-    else { this.current = other(thrower); this.winCells = null; sound.pico(0.25); }
+    else { this.current = other(thrower); this.winCells = null; this.rollCore(); sound.pico(0.25); }
     if (this.winner || this.isDraw) {
       this.gameOver = true; this.holding = 'gummy';
       if (this.winner) { this.wins[this.winner]++; sound.win(); }
@@ -446,8 +445,7 @@ export class SlingEngine {
     const holdMs = bomb ? 300 + Math.random() * 900 : 100 + Math.random() * 150;   // the bomb's power depends on when it lets go
     this.grab = { ...HOME }; this.pointer = { ...HOME }; this.pointerId = null;
     this.drawStart = now; this.state = 'drawing';
-    this.coreW = 0.04 + Math.random() * 0.06; this.coreLo = 0.3 + Math.random() * (0.9 - this.coreW - 0.3);
-    this.slip = null; this.flash = null; this.hits = [];
+    this.slip = null; this.flash = null;
     this.cpuPlan = { start: now, pullEnd: now + pullMs, releaseAt: now + pullMs + holdMs, dx, dy };
     this.sync();
   }
@@ -462,10 +460,10 @@ export class SlingEngine {
     return bestN >= 2 ? best : null;
   }
 
-  private flashText(text: string, x = W / 2, y = GY + 40) {
+  // shown in the strip above the jar (drawTopStrip)
+  private flashText(text: string) {
     this.flashDur = Math.min(2600, 900 + text.length * 70);
-    const half = Math.min(W / 2 - 4, text.length * 11);
-    this.flash = { text, x: Math.max(half, Math.min(W - half, x)), y, at: performance.now() };
+    this.flash = { text, at: performance.now() };
   }
 
   // ── Loop ───────────────────────────────────────────────────────────
@@ -525,10 +523,7 @@ export class SlingEngine {
       if (from !== undefined) { const t = Math.min(1, (now - this.settleAnim!.at) / 260); gy = GY + (from + (r - from) * easeIn(t)) * CELL + 4; }
       gummy(ctx, c * CELL + 4, gy, BLOCK, p);
     }
-    if (this.state !== 'drawing' && !this.gameOver) {
-      ctx.fillStyle = 'rgba(255,246,236,0.7)'; ctx.font = this.f(12); ctx.textAlign = 'center';
-      ctx.fillText('たて・よこ・ななめに 5つ ならべたら かち', W / 2, 21, W - 12);
-    }
+    this.drawTopStrip(now);
     this.drawPad(now);
     if (this.state === 'drawing') this.drawAim(now);
     this.drawFlight(now);
@@ -566,7 +561,7 @@ export class SlingEngine {
     if (!this.gameOver && (this.state === 'idle' || this.isCpuTurn())) {
       ctx.fillStyle = nudge ? COLORS.fuse : COLORS.accent; ctx.font = this.f(13); ctx.textAlign = 'center';
       const msg = nudge ? 'いまは CPUの ばん だよ'
-        : this.isCpuTurn() ? 'CPUが なげるよ…'
+        : this.isCpuTurn() ? ''
         : now - this.padHintAt < 1500 ? 'したの グミを ひっぱってね'
         : this.holding === 'bomb' ? 'ひっぱって、きんいろで はなす' : 'したに ひいて、よこで ねらって はなす';
       if (this.state === 'idle' || nudge) ctx.fillText(msg, W / 2, PAD_Y + 95, W - 12);
@@ -603,8 +598,13 @@ export class SlingEngine {
       const g2 = ctx.createLinearGradient(bx, 0, bx + 200, 0); g2.addColorStop(0, '#FF9A6B'); g2.addColorStop(1, COLORS.fuse);
       ctx.fillStyle = g2; rr(ctx, bx, by, 200 * pw, bh, 6); ctx.fill();
       const inCore = this.isCore(pw);
-      ctx.fillStyle = inCore ? '#FFF6B0' : 'rgba(255,225,77,0.95)'; rr(ctx, bx + 200 * this.coreLo, by - 3, 200 * this.coreW, bh + 6, 4); ctx.fill();
-      if (inCore) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+      // the gold band always has a white edge and a ▼ above it, so it doesn't rely on colour alone
+      const cx0 = bx + 200 * this.coreLo, cw = 200 * this.coreW;
+      ctx.fillStyle = inCore ? '#FFF6B0' : 'rgba(255,225,77,0.95)'; rr(ctx, cx0, by - 3, cw, bh + 6, 4); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = inCore ? 3 : 1.5; ctx.stroke();
+      // ▼ sits above the bar, clear of the white power line, in lemon with a white edge
+      ctx.fillStyle = COLORS.accent; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(cx0 + cw / 2 - 7, by - 17); ctx.lineTo(cx0 + cw / 2 + 7, by - 17); ctx.lineTo(cx0 + cw / 2, by - 8); ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#fff'; ctx.fillRect(bx + 200 * pw - 2, by - 5, 4, bh + 10);
       ctx.fillStyle = COLORS.text; ctx.font = this.f(12); ctx.textAlign = 'right'; ctx.fillText('いきおい', W / 2 - 106, PAD_Y + 17);
     }
@@ -631,7 +631,7 @@ export class SlingEngine {
         const x = s.sx + (tgt.x - s.sx) * easeOut(t);
         const y = t < 0.6 ? s.sy + (peak - s.sy) * easeOut(t / 0.6) : peak + (tgt.y - peak) * easeIn((t - 0.6) / 0.4);
         bombShape(ctx, x, y, BOMB_R_NEAR + (BOMB_R_FAR - BOMB_R_NEAR) * t);
-        if (t >= 1) { this.ripple = { x: tgt.x, y: tgt.y, at: now }; if (s.core) this.flashText('コア！', tgt.x, Math.max(GY + 16, tgt.y - 24)); this.bombArrive(s); }
+        if (t >= 1) { this.ripple = { x: tgt.x, y: tgt.y, at: now }; if (s.core) this.flashText('コア！'); this.bombArrive(s); }
       }
     }
     const b = this.body;
@@ -693,22 +693,25 @@ export class SlingEngine {
       ctx.restore();
     }
     this.drawShards(now);
-    for (let i = this.hits.length - 1; i >= 0; i--) {
-      const h = this.hits[i], k = (now - h.at) / 600;
-      if (k >= 1) { this.hits.splice(i, 1); continue; }
-      ctx.save(); ctx.globalAlpha = 1 - k; ctx.fillStyle = h.lvl === 3 ? COLORS.fuse : h.lvl === 2 ? COLORS.accent : COLORS.muted;
-      ctx.font = `${12 + h.lvl * 3}px ${HEAD}`; ctx.textAlign = 'center'; ctx.fillText(h.text, h.x, h.y - k * 14); ctx.restore();
-    }
-    if (this.bombGotFor && now >= this.bombGotAt && now - this.bombGotAt < 1400) {
-      const k = (now - this.bombGotAt) / 1400, text = `${this.names[this.bombGotFor]}、ばくだん ゲット！`;
-      ctx.save(); ctx.globalAlpha = 1 - Math.max(0, k - 0.6) / 0.4; ctx.fillStyle = COLORS.accent; ctx.font = this.f(18); ctx.textAlign = 'center';
-      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(43,27,61,0.95)'; ctx.strokeText(text, W / 2, GY + 80 - k * 8); ctx.fillText(text, W / 2, GY + 80 - k * 8); ctx.restore();
-    }
-    const fl = this.flash;
-    if (fl && now - fl.at < this.flashDur) {
-      const k = Math.max(0, (now - fl.at - (this.flashDur - 500)) / 500);   // hold, then fade over the last 0.5s
-      ctx.save(); ctx.globalAlpha = 1 - k; ctx.fillStyle = COLORS.accent; ctx.font = `${18 + (1 - k) * 4}px ${HEAD}`; ctx.textAlign = 'center';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(43,27,61,0.8)'; ctx.strokeText(fl.text, fl.x, fl.y); ctx.fillText(fl.text, fl.x, fl.y); ctx.restore();
+  }
+
+  // The strip above the jar holds one message at a time: what just happened, else the bomb you got, else the rule.
+  // Nothing is written over the gummies (they stay readable).
+  private drawTopStrip(now: number) {
+    const ctx = this.ctx, fl = this.flash;
+    const flashOn = !!fl && now - fl.at < this.flashDur;
+    const gotOn = !!this.bombGotFor && now >= this.bombGotAt && now - this.bombGotAt < 1400;
+    if (flashOn || gotOn) {
+      const text = flashOn ? fl!.text : `${this.names[this.bombGotFor!]}、ばくだん ゲット！`;
+      const k = flashOn ? Math.max(0, (now - fl!.at - (this.flashDur - 500)) / 500) : Math.max(0, (now - this.bombGotAt) / 1400 - 0.6) / 0.4;
+      const pop = flashOn && !RM ? Math.max(0, 1 - (now - fl!.at) / 180) : 0;   // a small bounce when it appears
+      ctx.save(); ctx.globalAlpha = 1 - k;
+      ctx.fillStyle = 'rgba(43,27,61,0.85)'; ctx.fillRect(0, 0, W, GY);
+      ctx.fillStyle = COLORS.accent; ctx.font = `${Math.round((17 + pop * 4) * this.fs)}px ${HEAD}`; ctx.textAlign = 'center';
+      ctx.fillText(text, W / 2, GY - 8, W - 12); ctx.restore();
+    } else if (this.state !== 'drawing' && !this.gameOver) {
+      ctx.fillStyle = 'rgba(255,246,236,0.7)'; ctx.font = this.f(12); ctx.textAlign = 'center';
+      ctx.fillText('たて・よこ・ななめに 5つ ならべたら かち', W / 2, 21, W - 12);
     }
   }
 

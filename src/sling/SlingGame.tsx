@@ -9,6 +9,7 @@ import { BOMB_EVERY, NAME, other, type SPlayer } from './rules';
 
 
 const TONE = { p1: THEME.p1, p2: THEME.p2 };
+const SOFT = THEME.soft;
 const hexA = (hex: string, a: number) => hex + Math.round(a * 255).toString(16).padStart(2, '0');
 
 export function PlayerChip({ player, size }: { player: SPlayer; size: number }) {
@@ -52,6 +53,7 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
   const [againReady, setAgainReady] = useState(false);
   const [askQuit, setAskQuit] = useState(false);   // first tap on ✕ asks, second tap leaves
   const [boardW, setBoardW] = useState(() => boardWidth());
+  const [vh, setVh] = useState(() => window.innerHeight);
 
   useEffect(() => {
     const eng = new SlingEngine(cvRef.current!, fxRef.current!, setUi, { cpu });
@@ -63,7 +65,7 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
 
   // The board grows with the screen up to 560px (cells 24–56px, DESIGN.md §8); the band and bars scale with it
   useEffect(() => {
-    const onResize = () => setBoardW(boardWidth());
+    const onResize = () => { setBoardW(boardWidth()); setVh(window.innerHeight); };
     window.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', onResize);
     return () => { window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); };
@@ -82,7 +84,13 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
   const width = boardW, k = boardW / W, sz = (px: number, min = 0) => Math.max(min, Math.round(px * k));
   const markP: SPlayer | null = ui ? (ui.isDraw ? null : ui.winner || ui.current) : null;
   const tone = markP ? TONE[markP].base : '#FFFFFF';
-  const bandText = !ui ? '' : ui.isDraw ? 'ひきわけ！' : ui.winner ? `${names[ui.winner]}の かち！` : `${names[ui.current]}の ばん`;
+  // after a win the band says what happened; the winner's name is only on the result card (not twice)
+  const bandText = !ui ? '' : ui.isDraw ? 'ひきわけ！' : ui.winner ? (ui.endNote || '5つ そろった！') : `${names[ui.current]}の ばん`;
+  // The band and the jar never move: their top is fixed from the playing layout, and the result card just grows downward
+  // (the space below is sized for the taller result card; on narrow boards its buttons wrap onto a second row)
+  const bandH = Math.max(sz(54, 54), sz(40, 44) + 12), barH = sz(56, 56);
+  const resultH = boardW < 330 ? Math.max(120, sz(125)) : Math.max(84, sz(84));
+  const topPad = Math.max(16, Math.floor((vh - (bandH + 10 + boardW * H / W + 10 + Math.max(barH, resultH))) / 2));
   const have = ui ? ui.bombs[ui.current] : 0;
   const holdingBomb = ui?.holding === 'bomb';
   const btnDisabled = !ui || ui.gameOver || ui.busy || ui.cpuTurn || (!holdingBomb && have === 0);
@@ -95,10 +103,10 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
     : have === 0 ? `ばくだんまで あと${BOMB_EVERY - ui.charge[ui.current]}かい` : 'ばくだんボタンを おすと つかえるよ！';
 
   return (
-    <div onPointerDown={unlock} onPointerUp={unlock} style={{ position: 'fixed', inset: 0, zIndex: 40, overflowY: 'auto', minHeight: '100dvh', background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`, color: THEME.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'safe center', gap: 10, padding: '16px 16px max(16px, env(safe-area-inset-bottom))', fontFamily: FONTS.body }}>
+    <div onPointerDown={unlock} onPointerUp={unlock} style={{ position: 'fixed', inset: 0, zIndex: 40, overflowY: 'auto', minHeight: '100dvh', background: `radial-gradient(120% 70% at 50% 0%, ${THEME.bgTop} 0%, ${THEME.bg} 60%)`, color: THEME.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', gap: 10, padding: `${topPad}px 16px max(16px, env(safe-area-inset-bottom))`, fontFamily: FONTS.body }}>
       {/* Turn band — always the same height; the 34px slot on the right stays empty when playing on one device */}
       <div style={{
-        width, minHeight: sz(54, 54), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '6px 10px 6px 14px', borderRadius: 16,
+        width, minHeight: bandH, boxSizing: 'border-box', display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: 6, padding: '6px 10px 6px 14px', borderRadius: 16,
         background: ui?.isDraw ? 'rgba(255,255,255,0.08)' : `linear-gradient(90deg, ${hexA(tone, 0.35)}, ${hexA(tone, 0.08)})`,
         boxShadow: ui?.isDraw ? 'inset 0 0 0 2px rgba(255,255,255,0.3)' : `inset 0 0 0 2px ${hexA(tone, 0.6)}`,
         transition: 'background 0.25s ease-out, box-shadow 0.25s ease-out',
@@ -115,14 +123,13 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
             fontFamily: FONTS.heading, fontSize: askQuit ? sz(13, 13) : sz(16, 16),
           }}
         >{askQuit ? 'やめる？' : '✕'}</button>
-        {ui?.endNote && <span style={{ flexBasis: '100%', marginLeft: 32, fontSize: sz(13, 13), fontWeight: 800, color: THEME.accent }}>{ui.endNote}</span>}
       </div>
 
       <canvas ref={cvRef} style={{ display: 'block', width, height: 'auto', aspectRatio: `${W} / ${H}`, borderRadius: 14, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }} aria-label="びん と はっしゃだい。したの グミを ひっぱって なげる" role="img" />
 
       {/* Bottom bar while playing, result card once the game is decided (same place) */}
       {ui && !ui.gameOver && (
-        <div style={{ width, height: sz(56, 56), display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width, height: barH, display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <button
               onClick={() => engRef.current?.toggleBomb()}
@@ -146,8 +153,8 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
               ))}
             </div>
           </div>
-          <span style={{ flex: 1, minWidth: 0, fontSize: sz(13, 13), color: THEME.muted, lineHeight: 1.4, lineBreak: 'strict', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{hint}</span>
-          <span style={{ fontSize: sz(12, 12), color: THEME.muted, whiteSpace: 'nowrap' }}>あいて ×{ui.bombs[other(ui.current)]}</span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: sz(14, 14), fontWeight: 800, color: SOFT, lineHeight: 1.4, lineBreak: 'strict', wordBreak: 'keep-all', overflowWrap: 'anywhere' }}>{hint}</span>
+          <span style={{ fontSize: sz(13, 13), fontWeight: 800, color: SOFT, whiteSpace: 'nowrap' }}>あいて ×{ui.bombs[other(ui.current)]}</span>
         </div>
       )}
       {ui?.gameOver && (
@@ -155,7 +162,7 @@ export default function SlingGame({ onMenu, cpu = false }: { onMenu: () => void;
           {ui.winner && <PlayerChip player={ui.winner} size={sz(28, 26)} />}
           <div style={{ flex: '1 1 auto', minWidth: 'max-content' }}>
             <div style={{ fontFamily: FONTS.heading, fontSize: sz(16, 15), whiteSpace: 'nowrap' }}>{ui.winner ? `${names[ui.winner]}の かち！` : 'ひきわけ！'}</div>
-            <div style={{ fontSize: sz(13, 12), color: THEME.muted, fontWeight: 800, marginTop: 2, whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: sz(14, 13), color: SOFT, fontWeight: 800, marginTop: 2, whiteSpace: 'nowrap' }}>
               ソーダ <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: sz(16, 15) }}>{ui.wins.p1}</b> − <b style={{ fontFamily: FONTS.logo, fontWeight: 400, color: THEME.text, fontSize: sz(16, 15) }}>{ui.wins.p2}</b> {names.p2}
             </div>
           </div>

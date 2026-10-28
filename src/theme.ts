@@ -14,6 +14,7 @@ export const COLORS = {
   sub: '#EAD9FF',
   text: '#FFF6EC',
   muted: '#BFAED6',
+  soft: 'rgba(255,246,236,0.85)',   // small helper text that must stay readable (bottom bar, result score)
 } as const;
 
 export const FONTS = {
