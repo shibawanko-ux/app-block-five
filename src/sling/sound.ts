@@ -14,14 +14,26 @@ export function setMuted(m: boolean) {
   muted = m;
   try { localStorage.setItem(MUTE_KEY, m ? '1' : '0'); } catch { /* storage blocked */ }
   if (m) stretchStop();
+  if (ac) setSessionType(m ? 'ambient' : 'playback');
   // also silence sounds that are already scheduled (a long explosion keeps ringing otherwise)
   try { if (ac && master) master.gain.setTargetAtTime(m ? 0 : MASTER_VOL, ac.currentTime, 0.01); } catch { /* ignore */ }
   listeners.forEach(f => f(m));
 }
 export function onMutedChange(f: (m: boolean) => void) { listeners.add(f); return () => { listeners.delete(f); }; }
 
+// iPhone treats Web Audio as "ambient" sound, which the ring/silent switch mutes. Declaring it as "playback"
+// (iOS 17+) lets the game sound play with the switch on; the in-game mute button is the way to silence it.
+// While muted we go back to "ambient" so other apps' music isn't interrupted.
+function setSessionType(t: 'playback' | 'ambient') {
+  try {
+    const n = navigator as unknown as { audioSession?: { type: string } };
+    if (n.audioSession) n.audioSession.type = t;
+  } catch { /* not supported */ }
+}
+
 export function unlock() {
   try {
+    if (!ac) setSessionType(muted ? 'ambient' : 'playback');
     if (!ac) {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AC) return;
