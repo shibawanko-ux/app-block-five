@@ -668,7 +668,7 @@ export default function App() {
   const [bombsRemaining, setBombsRemaining] = useState<Record<Player, number>>({
     p1: BOMBS_PER_PLAYER, p2: BOMBS_PER_PLAYER, p3: BOMBS_PER_PLAYER, p4: BOMBS_PER_PLAYER,
   });
-  const [showGrid, setShowGrid] = useState(false);
+  // the 「ますめを表示」 switch was removed (2026-10-28); the old drop-from-above board (online) draws no grid
   const showGridRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
@@ -1770,17 +1770,6 @@ export default function App() {
               <div style={{ color: THEME.muted, fontSize: 12, textAlign: 'center', lineHeight: 1.7, padding: '0 16px' }}>
                 たて・よこ・ななめに 5つ そろえたら かち！
               </div>
-              <div
-                onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', cursor: 'pointer' }}
-              >
-                <span style={{ color: THEME.muted, fontSize: 13 }}>ますめを表示</span>
-                <div
-                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? THEME.p1.base : 'rgba(255,255,255,0.12)', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
-                >
-                  <div style={{ position: 'absolute', top: 2, left: showGrid ? 17 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
-                </div>
-              </div>
               {/* BGM credit required by the 魔王魂 terms (https://maou.audio/rule/) */}
               <a href="https://maou.audio/" target="_blank" rel="noopener noreferrer" style={{ color: THEME.muted, fontSize: 12, padding: '4px 16px', textDecoration: 'underline' }}>
                 音楽：魔王魂
@@ -1945,15 +1934,6 @@ export default function App() {
                     transition: 'all 0.2s',
                   }}
                 >{codeCopied ? 'コピーしました' : 'コードをコピー'}</button>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: '#BFAED6', fontSize: 13 }}>ますめを表示</span>
-                <div
-                  onClick={() => { const n = !showGrid; setShowGrid(n); showGridRef.current = n; }}
-                  style={{ width: 36, height: 20, borderRadius: 10, background: showGrid ? '#36C2F0' : 'rgba(255,255,255,0.12)', position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0 }}
-                >
-                  <div style={{ position: 'absolute', top: 2, left: showGrid ? 17 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
-                </div>
               </div>
 
               <button
